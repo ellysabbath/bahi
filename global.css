@@ -1,0 +1,15 @@
+/* global.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles */
+@layer components {
+  .card-shadow {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  
+  .card-shadow-dark {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+}
