@@ -6,15 +6,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Create axios instance
 const api = axios.create({
   baseURL: API_CONFIG.BASE_URL,
-  headers: API_CONFIG.DEFAULT_HEADERS,
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    ...API_CONFIG.DEFAULT_HEADERS,
+  },
   timeout: API_CONFIG.TIMEOUT,
 });
 
 // Request interceptor
 api.interceptors.request.use(
   async (config) => {
-    // Get token from AsyncStorage
-    const token = await AsyncStorage.getItem('access_token');
+    // Get token from AsyncStorage using SAME key as authApi
+    const token = await AsyncStorage.getItem('quickfix_access_token'); // Changed from 'access_token'
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -36,7 +40,7 @@ api.interceptors.response.use(
       originalRequest._retry = true;
       
       try {
-        const refreshToken = await AsyncStorage.getItem('refresh_token');
+        const refreshToken = await AsyncStorage.getItem('quickfix_refresh_token'); // Changed from 'refresh_token'
         if (refreshToken) {
           // Try to refresh token
           const response = await axios.post(
@@ -45,15 +49,21 @@ api.interceptors.response.use(
           );
           
           const { access } = response.data;
-          await AsyncStorage.setItem('access_token', access);
+          await AsyncStorage.setItem('quickfix_access_token', access); // Changed from 'access_token'
           
           // Retry original request
           originalRequest.headers.Authorization = `Bearer ${access}`;
           return api(originalRequest);
         }
       } catch {
-        // Refresh failed, redirect to login
-        await AsyncStorage.clear();
+        // Refresh failed, clear all auth data
+        await AsyncStorage.multiRemove([
+          'quickfix_access_token',
+          'quickfix_refresh_token',
+          'quickfix_user_data',
+          'access_token',
+          'refresh_token',
+        ]);
         // You might want to navigate to login screen here
       }
     }

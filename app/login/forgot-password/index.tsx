@@ -1,133 +1,49 @@
 // app/login/forgot-password.tsx
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   View, 
   Text, 
   TextInput, 
   TouchableOpacity, 
-  Alert, 
-  Modal, 
-  Animated,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
   TouchableWithoutFeedback,
   Keyboard,
-  Dimensions
+  ActivityIndicator
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ArrowLeft, Mail, CheckCircle } from 'lucide-react-native';
 import { router } from 'expo-router';
+import { passwordResetAPI } from '../services/passwordResetApi';
 import { passwordResetService } from '../services/passwordResetService';
-
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState('');
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [resetState, setResetState] = useState(passwordResetService.getState());
   const [loading, setLoading] = useState(false);
-  const [autoRedirectTimer, setAutoRedirectTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState(false);
   
-  const scaleAnim = useRef(new Animated.Value(0)).current;
-  const opacityAnim = useRef(new Animated.Value(0)).current;
+  const emailInputRef = useRef<TextInput>(null);
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Check if screen is small
-  const isSmallScreen = SCREEN_HEIGHT < 700;
-  
-  // Get responsive scale factor
-  const getScaleFactor = () => {
-    if (SCREEN_HEIGHT < 600) return 0.8; // Very small screens
-    if (SCREEN_HEIGHT < 700) return 0.85; // Small screens
-    if (SCREEN_HEIGHT < 800) return 0.9; // Medium screens
-    return 0.95; // Large screens
-  };
-  
-  const scaleFactor = getScaleFactor();
-
-  // Create animation function with proper dependencies
-  const runSuccessAnimation = useCallback(() => {
-    Animated.parallel([
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        tension: 100,
-        friction: 8,
-        useNativeDriver: true,
-      }),
-      Animated.timing(opacityAnim, {
-        toValue: 1,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [scaleAnim, opacityAnim]);
-
-  // Clear any existing timers
-  const clearTimers = useCallback(() => {
-    if (autoRedirectTimer) {
-      clearTimeout(autoRedirectTimer);
-      setAutoRedirectTimer(null);
-    }
-  }, [autoRedirectTimer]);
-
-  const showSuccessMessage = useCallback(() => {
-    setShowSuccessModal(true);
-    runSuccessAnimation();
-
-    // Clear any existing timers
-    clearTimers();
-
-    // Set up auto navigation after 5 seconds
-    const timerId = setTimeout(() => {
-      router.push({
-        pathname: '/login/password-reset-otp-verify',
-        params: { 
-          email,
-          resetToken: resetState.resetToken || '' 
-        }
-      });
-    }, 5000); // 5 seconds auto-redirect
-
-    setAutoRedirectTimer(timerId);
-  }, [email, resetState.resetToken, runSuccessAnimation, clearTimers]);
-
-  // Subscribe to state changes
   useEffect(() => {
-    const unsubscribe = passwordResetService.subscribe((state) => {
-      setResetState(state);
-    });
-
-    // Dismiss keyboard on mount
     Keyboard.dismiss();
-
-    // Cleanup on unmount
-    return () => {
-      unsubscribe();
-      clearTimers();
-    };
-  }, [clearTimers]);
-
-  // Check for successful OTP send
-  useEffect(() => {
-    if (resetState.otpSent && !showSuccessModal) {
-      showSuccessMessage();
-    }
-  }, [resetState.otpSent, showSuccessModal, showSuccessMessage]);
+    emailInputRef.current?.focus();
+  }, []);
 
   const handleSubmit = async () => {
-    // Dismiss keyboard first
     Keyboard.dismiss();
+    setError('');
 
-    // Validation
     if (!email.trim()) {
-      Alert.alert('Validation Error', 'Please enter your email address');
+      Alert.alert('Error', 'Please enter your email address');
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      Alert.alert('Validation Error', 'Please enter a valid email address');
+    if (!passwordResetAPI.isValidEmail(email)) {
+      Alert.alert('Error', 'Please enter a valid email address');
       return;
     }
 
@@ -136,9 +52,31 @@ export default function ForgotPasswordScreen() {
     try {
       const response = await passwordResetService.requestOTP(email);
       
-      if (!response.success) {
-        Alert.alert('Error', response.message || 'Failed to send OTP');
+      if (response.success) {
+        setSuccess(true);
+        Alert.alert('Success', response.message, [
+          {
+            text: 'Continue',
+            onPress: () => {
+              const displayEmail = passwordResetAPI.formatEmailForDisplay(email);
+              router.push({
+                pathname: '/login/password-reset-otp-verify',
+                params: { 
+                  email: email.toLowerCase().trim(),
+                  display_email: displayEmail
+                }
+              });
+            }
+          }
+        ]);
+      } else {
+        setError(response.message);
+        Alert.alert('Error', response.message);
       }
+    } catch (error: any) {
+      const errorMsg = error.message || 'Network error. Please try again.';
+      setError(errorMsg);
+      Alert.alert('Error', errorMsg);
     } finally {
       setLoading(false);
     }
@@ -149,340 +87,119 @@ export default function ForgotPasswordScreen() {
     router.back();
   };
 
-  const handleManualNavigate = () => {
-    // Just navigate without hiding the modal
-    Keyboard.dismiss();
-    
-    // Clear auto-redirect timer since we're navigating manually
-    clearTimers();
-    
-    // Navigate immediately
-    router.push({
-      pathname: '/login/password-reset-otp-verify',
-      params: { 
-        email,
-        resetToken: resetState.resetToken || '' 
-      }
-    });
-    
-    // Don't hide the modal - let it stay visible during navigation
-    // The modal will be automatically dismissed when component unmounts
-  };
-
-  const isFormValid = email.trim() !== '';
-  const isLoading = loading || resetState.isLoading;
-
-  // Responsive values based on screen height
-  const getResponsiveSize = (base: number) => Math.round(base * scaleFactor);
+  const isFormValid = email.trim() !== '' && passwordResetAPI.isValidEmail(email);
 
   return (
     <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#111827', paddingTop: Platform.OS === 'android' ? 10 : 0 }}>
+      <SafeAreaView className="flex-1 bg-gray-900">
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? (isSmallScreen ? 20 : 40) : 20}
-          style={{ flex: 1 }}
+          className="flex-1"
         >
           <ScrollView
             ref={scrollViewRef}
-            contentContainerStyle={{ 
-              flexGrow: 1,
-              paddingHorizontal: 20,
-              paddingVertical: 15,
-              paddingBottom: 20,
-            }}
+            contentContainerStyle={{ flexGrow: 1 }}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
-            bounces={false}
           >
-            {/* Header - Compact */}
-            <View style={{ marginBottom: getResponsiveSize(12) }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: getResponsiveSize(8) }}>
+            {/* Header */}
+            <View className="px-6 pt-6">
+              <View className="flex-row items-center mb-8">
                 <TouchableOpacity 
                   onPress={handleBack} 
-                  style={{
-                    width: getResponsiveSize(36),
-                    height: getResponsiveSize(36),
-                    borderRadius: getResponsiveSize(18),
-                    backgroundColor: '#1F2937',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    marginRight: 12,
-                  }}
-                  disabled={isLoading}
+                  className="w-10 h-10 rounded-full bg-gray-800 items-center justify-center mr-4"
+                  disabled={loading}
                 >
-                  <ArrowLeft size={getResponsiveSize(18)} color="#60A5FA" />
+                  <ArrowLeft size={20} color="#60A5FA" />
                 </TouchableOpacity>
-                <View style={{ flex: 1 }}>
-                  <Text style={{
-                    fontSize: getResponsiveSize(20),
-                    fontWeight: 'bold',
-                    color: 'white',
-                    marginBottom: 2,
-                  }}>
-                    Forgot Password
-                  </Text>
-                  <Text style={{
-                    fontSize: getResponsiveSize(12),
-                    color: '#9CA3AF',
-                  }}>
-                    Enter your email to reset your password
+                <View className="flex-1">
+                  <Text className="text-2xl font-bold text-white">Forgot Password</Text>
+                  <Text className="text-gray-400 text-sm">
+                    We`ll send a verification code to your email
                   </Text>
                 </View>
               </View>
             </View>
 
-            {/* Form - Compact */}
-            <View style={{ flex: 1 }}>
-              <Text style={{
-                fontSize: getResponsiveSize(16),
-                fontWeight: '600',
-                color: 'white',
-                marginBottom: 4,
-              }}>
-                Reset Your Password
-              </Text>
-              <Text style={{
-                fontSize: getResponsiveSize(12),
-                color: '#9CA3AF',
-                marginBottom: getResponsiveSize(16),
-              }}>
-                We`ll send a verification code to your email
-              </Text>
-
-              {/* Email Input - Compact */}
-              <View style={{ marginBottom: getResponsiveSize(12) }}>
-                <Text style={{
-                  fontSize: getResponsiveSize(12),
-                  color: '#D1D5DB',
-                  fontWeight: '500',
-                  marginBottom: 6,
-                }}>
+            {/* Form */}
+            <View className="px-6 flex-1">
+              <View className="mb-6">
+                <Text className="text-gray-300 text-sm font-medium mb-2">
                   Email Address
                 </Text>
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: '#1F2937',
-                  borderRadius: 12,
-                  paddingHorizontal: 14,
-                  paddingVertical: 12,
-                  borderWidth: 1,
-                  borderColor: isLoading ? '#4B5563' : '#374151',
-                }}>
-                  <Mail size={getResponsiveSize(16)} color={isLoading ? "#6B7280" : "#9CA3AF"} />
+                <View className="flex-row items-center bg-gray-800 rounded-xl px-4 py-3 border border-gray-700">
+                  <Mail size={18} color="#9CA3AF" />
                   <TextInput
-                    placeholder="john.doe@example.com"
+                    ref={emailInputRef}
+                    className="flex-1 ml-3 text-white text-base"
+                    placeholder="Enter your email"
                     placeholderTextColor="#6B7280"
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
                     value={email}
-                    onChangeText={setEmail}
-                    editable={!isLoading}
+                    onChangeText={(text) => {
+                      setEmail(text.toLowerCase());
+                      setError('');
+                    }}
+                    editable={!loading}
                     returnKeyType="done"
                     onSubmitEditing={handleSubmit}
-                    style={{
-                      flex: 1,
-                      marginLeft: 10,
-                      fontSize: getResponsiveSize(14),
-                      color: "#FFFFFF",
-                      paddingVertical: 0,
-                    }}
-                    cursorColor="#3B82F6"
-                    selectionColor="#3B82F6"
                   />
                 </View>
+                <Text className="text-gray-500 text-xs mt-1 ml-1">
+                  Enter your registered email address
+                </Text>
               </View>
 
-              {/* Error Display - Compact */}
-              {resetState.error && (
-                <View style={{
-                  backgroundColor: 'rgba(127, 29, 29, 0.3)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(185, 28, 28, 0.5)',
-                  borderRadius: 12,
-                  padding: 12,
-                  marginBottom: getResponsiveSize(12),
-                }}>
-                  <Text style={{ color: '#FCA5A5', fontSize: getResponsiveSize(12) }}>
-                    {resetState.error}
-                  </Text>
+              {/* Error Display */}
+              {error ? (
+                <View className="bg-red-900/20 border border-red-800/30 rounded-xl p-3 mb-4">
+                  <Text className="text-red-300 text-sm">{error}</Text>
                 </View>
-              )}
+              ) : null}
 
+              {/* Info Box */}
+              <View className="bg-blue-900/20 border border-blue-800/30 rounded-xl p-4 mb-6">
+                <Text className="text-blue-300 text-sm">
+                  📧 A 6-digit verification code will be sent to your email address.
+                </Text>
+              </View>
 
-                          {/* Button Section - Compact */}
-            <View style={{ 
-              paddingTop: getResponsiveSize(12),
-              borderTopWidth: 1,
-              borderTopColor: '#374151',
-            }}>
-              <TouchableOpacity
-                style={{
-                  borderRadius: 12,
-                  paddingVertical: getResponsiveSize(14),
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: isLoading || !isFormValid ? 'rgba(30, 64, 175, 0.5)' : '#3B82F6',
-                }}
-                onPress={handleSubmit}
-                disabled={isLoading || !isFormValid}
-                activeOpacity={0.8}
-              >
-                <Text style={{
-                  color: 'white',
-                  fontWeight: 'bold',
-                  fontSize: getResponsiveSize(14),
-                }}>
-                  {isLoading ? 'Sending...' : 'Send Verification Code'}
-                </Text>
-                <Text style={{
-                  color: '#D1D5DB',
-                  fontSize: getResponsiveSize(11),
-                  marginTop: 4,
-                }}>
-                  We`ll email you a 6-digit code
-                </Text>
-              </TouchableOpacity>
-
-              {/* Back Button - Compact */}
-              <TouchableOpacity
-                style={{ paddingVertical: getResponsiveSize(12), alignItems: 'center', marginTop: 8 }}
-                onPress={handleBack}
-                disabled={isLoading}
-              >
-                <Text style={{
-                  color: '#9CA3AF',
-                  fontSize: getResponsiveSize(13),
-                }}>
-                  Back to Sign In
-                </Text>
-              </TouchableOpacity>
+              <View className="flex-1" />
             </View>
-
-
-
-              {/* Spacer */}
-              <View style={{ flex: 1, minHeight: getResponsiveSize(20) }} />
-            </View>
-
-
           </ScrollView>
-        </KeyboardAvoidingView>
 
-        {/* Success Modal - Compact */}
-        <Modal
-          visible={showSuccessModal}
-          transparent={true}
-          animationType="fade"
-          statusBarTranslucent={true}
-        >
-          <View style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.7)', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-            <Animated.View 
-              style={{
-                transform: [{ scale: scaleAnim }],
-                opacity: opacityAnim,
-                backgroundColor: '#1F2937',
-                borderRadius: 20,
-                padding: getResponsiveSize(20),
-                alignItems: 'center',
-                width: '100%',
-                maxWidth: 400,
-              }}
+          {/* Fixed Button Section */}
+          <View className="px-6 pb-6 pt-4 border-t border-gray-800 bg-gray-900">
+            <TouchableOpacity
+              className={`rounded-xl py-4 items-center justify-center ${
+                loading || !isFormValid ? 'bg-blue-800/50' : 'bg-blue-600'
+              }`}
+              onPress={handleSubmit}
+              disabled={loading || !isFormValid}
+              activeOpacity={0.8}
             >
-              {/* Success Icon - Compact */}
-              <View style={{
-                width: getResponsiveSize(60),
-                height: getResponsiveSize(60),
-                backgroundColor: '#10B981',
-                borderRadius: getResponsiveSize(30),
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: getResponsiveSize(12),
-              }}>
-                <CheckCircle size={getResponsiveSize(30)} color="#FFFFFF" />
-              </View>
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text className="text-white font-bold text-lg">
+                  Send Verification Code
+                </Text>
+              )}
+            </TouchableOpacity>
 
-              {/* Success Message - Compact */}
-              <Text style={{
-                fontSize: getResponsiveSize(18),
-                fontWeight: 'bold',
-                color: 'white',
-                marginBottom: 8,
-                textAlign: 'center',
-              }}>
-                Code Sent Successfully!
+            <TouchableOpacity
+              className="mt-4 py-3 items-center"
+              onPress={handleBack}
+              disabled={loading}
+            >
+              <Text className="text-gray-400 text-base">
+                Back to Sign In
               </Text>
-              
-              <Text style={{
-                fontSize: getResponsiveSize(12),
-                color: '#9CA3AF',
-                textAlign: 'center',
-                marginBottom: getResponsiveSize(12),
-              }}>
-                A 6-digit verification code has been sent to your email.
-              </Text>
-
-              {/* Email Display - Compact */}
-              <View style={{
-                backgroundColor: '#111827',
-                borderRadius: 12,
-                padding: 12,
-                width: '100%',
-                marginBottom: getResponsiveSize(12),
-              }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                  <Mail size={getResponsiveSize(14)} color="#60A5FA" style={{ marginRight: 8 }} />
-                  <Text style={{ color: 'white', fontWeight: '500', fontSize: getResponsiveSize(13) }}>
-                    {email}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Manual Navigate Button - Compact */}
-              <TouchableOpacity
-                style={{
-                  backgroundColor: '#3B82F6',
-                  borderRadius: 12,
-                  paddingVertical: getResponsiveSize(12),
-                  paddingHorizontal: getResponsiveSize(16),
-                  width: '100%',
-                  alignItems: 'center',
-                  marginBottom: getResponsiveSize(8),
-                }}
-                onPress={handleManualNavigate}
-                activeOpacity={0.8}
-              >
-                <Text style={{
-                  color: 'white',
-                  fontWeight: 'bold',
-                  fontSize: getResponsiveSize(14),
-                }}>
-                  Continue to Verification
-                </Text>
-                <Text style={{
-                  color: '#93C5FD',
-                  fontSize: getResponsiveSize(11),
-                  marginTop: 4,
-                }}>
-                  Enter the verification code
-                </Text>
-              </TouchableOpacity>
-
-              {/* Countdown - Compact */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{
-                  fontSize: getResponsiveSize(11),
-                  color: '#9CA3AF',
-                }}>
-                  Auto-redirecting in{' '}
-                  <Text style={{ color: '#60A5FA', fontWeight: 'bold' }}>5</Text> seconds...
-                </Text>
-              </View>
-            </Animated.View>
+            </TouchableOpacity>
           </View>
-        </Modal>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </TouchableWithoutFeedback>
   );

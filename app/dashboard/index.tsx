@@ -1,1085 +1,1257 @@
-// app/dashboard/services/index.tsx
+// DonationSummaryScreen.tsx
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  FontAwesome5,
-  Ionicons,
-  MaterialCommunityIcons,
-  MaterialIcons,
-} from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Location from 'expo-location';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Dimensions,
-  Modal,
-  Platform,
+  View,
+  Text,
+  ScrollView,
   RefreshControl,
   SafeAreaView,
-  ScrollView,
   StatusBar,
-  Text,
-  TextInput,
   TouchableOpacity,
-  View,
+  ActivityIndicator,
+  Modal,
+  Dimensions,
+  Alert,
+  Share,
+  Linking,
+  Platform,
 } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE, Region } from 'react-native-maps';
-import Sidebar from '../../components/Sidebar';
-import { useTheme } from '../../context/ThemeContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter, Link } from 'expo-router';
 
-const SCREEN_HEIGHT = Dimensions.get('window').height;
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useUser } from '../../context/UserContext'; // Adjust the path as needed
 
 // Type definitions
-interface ServiceType {
-  id: number;
-  name: string;
-  description?: string;
-  base_price: string;
-  duration: string;
-  garage: number;
-  garage_name?: string;
-  service_name?: string;
-  price?: string;
-  garage_id?: number;
+interface Summary {
+  total_donations: number;
+  total_amount: number;
+  total_zaka: number;
+  total_ctf_donations: number;
+  total_church_donations: number;
+  total_ctf: number;
+  total_church: number;
+  total_all: number;
 }
 
-interface GarageType {
-  id: number;
-  name: string;
-  address?: string;
-  phone?: string;
-  email?: string;
-  latitude?: string | number;
-  longitude?: string | number;
-  description?: string;
-  opening_hours?: string;
-  services?: number[];
+interface TypeDistribution {
+  donation_type: string;
+  count: number;
+  total: number;
+  percentage: number;
 }
 
-interface UserLocation {
-  latitude: number;
-  longitude: number;
-  accuracy?: number;
+interface TopDonor {
+  user__id: number;
+  user__fullname: string;
+  user__mobile_number: string;
+  total_donated: number;
+  donation_count: number;
 }
 
-interface UserInfo {
-  role?: string;
-  username?: string;
-  email?: string;
+interface TopChurch {
+  church__id: number;
+  church__church_name: string;
+  total_received: number;
+  donation_count: number;
 }
 
-// Icon types for MaterialIcons
-type MaterialIconName = 'build' | 'business' | 'receipt' | 'person' | 'settings' | 'search' | 'admin-panel-settings' | 'arrow-forward-ios';
+interface MonthlyTrend {
+  month: string;
+  total: number;
+  count: number;
+}
 
-// Navigation path type
-type AppRoute = 
-  | '/admin/services'
-  | '/admin/garages'
-  | '/admin/bookings'
-  | '/dashboard/profile'
-  | '/dashboard/bookings'
-  | '/dashboard/settings'
-  | '/dashboard/garages'
-  | '/login';
+interface DonationSummaryData {
+  summary: Summary;
+  type_distribution: TypeDistribution[];
+  top_donors: TopDonor[];
+  top_churches: TopChurch[];
+  monthly_trend: MonthlyTrend[];
+}
 
-const API_BASE_URL = 'https://AutoFix.pythonanywhere.com';
+interface MenuItem {
+  id: string;
+  title: string;
+  icon: string;
+  route: string;
+}
 
-// Navigation helper with proper typing
-const useAppNavigation = () => {
-  const router = useRouter();
-  
-  const push = (path: AppRoute) => {
-    router.push(path as any);
-  };
-  
-  const replace = (path: AppRoute) => {
-    router.replace(path as any);
-  };
-  
-  return { push, replace };
+const API_URL = 'https://mhazini.pythonanywhere.com/api/auth/donations/summary/';
+const { width, height } = Dimensions.get('window');
+
+const STORAGE_KEYS = {
+  DONATION_SUMMARY: 'donation_summary_data',
+  LAST_UPDATED: 'donation_summary_last_updated',
+  CACHE_EXPIRY: 'donation_summary_cache_expiry',
 };
 
-// Menu action interface
-interface MenuAction {
-  label: string;
-  icon: MaterialIconName;
-  action: () => void;
-}
+const DonationSummaryScreen: React.FC = () => {
+  const router = useRouter();
+  const { user, logout: contextLogout } = useUser();
+  const [theme] = useState<'light' | 'dark'>('light');
+  const [summaryData, setSummaryData] = useState<DonationSummaryData | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [offline, setOffline] = useState<boolean>(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [sidebarVisible, setSidebarVisible] = useState<boolean>(false);
+  const [activeMenuItem, setActiveMenuItem] = useState<string>('dashboard');
+  const [showSuccessModal, setShowSuccessModal] = useState<boolean>(false);
+  const [showErrorModal, setShowErrorModal] = useState<boolean>(false);
+  const [modalMessage, setModalMessage] = useState<string>('');
 
-export default function ServicesScreen() {
-  // State declarations
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [services, setServices] = useState<ServiceType[]>([]);
-  const [garages, setGarages] = useState<GarageType[]>([]);
-  const [filteredServices, setFilteredServices] = useState<ServiceType[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [userLocation, setUserLocation] = useState<UserLocation | null>(null);
-  const [loadingLocation, setLoadingLocation] = useState(false);
-  const [locationPermissionDenied, setLocationPermissionDenied] = useState(false);
-  const [selectedService, setSelectedService] = useState<ServiceType | null>(null);
-  const [mapRegion, setMapRegion] = useState<Region | null>(null);
-  const [showAdminMenu, setShowAdminMenu] = useState(false);
-  const [showProfileMenu, setShowProfileMenu] = useState(false);
-  const [showSidebar, setShowSidebar] = useState(false);
-  const [activeTab, setActiveTab] = useState<'services' | 'map'>('services');
-  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
-  
-  const mapRef = useRef<MapView>(null);
-  const { theme } = useTheme();
-  const params = useLocalSearchParams();
-  const { push, replace } = useAppNavigation();
-  
-  const garageName = typeof params.garageName === 'string' ? params.garageName : null;
+  // Theme colors
+  const colors = {
+    light: {
+      background: '#f8fafc',
+      cardBackground: '#ffffff',
+      cardBorder: '#e2e8f0',
+      textPrimary: '#1e293b',
+      textSecondary: '#64748b',
+      textTertiary: '#94a3b8',
+      headerBackground: '#ffffff',
+      headerBorder: '#e2e8f0',
+      buttonPrimary: '#3b82f6',
+      buttonSecondary: '#60a5fa',
+      success: '#10b981',
+      warning: '#f59e0b',
+      danger: '#ef4444',
+      info: '#0ea5e9',
+      iconPrimary: '#475569',
+      iconSecondary: '#94a3b8',
+      overlay: 'rgba(0, 0, 0, 0.5)',
+      gradientStart: '#4f46e5',
+      gradientEnd: '#7c3aed',
+    },
+    dark: {
+      background: '#0f172a',
+      cardBackground: '#1e293b',
+      cardBorder: '#334155',
+      textPrimary: '#f1f5f9',
+      textSecondary: '#cbd5e1',
+      textTertiary: '#94a3b8',
+      headerBackground: '#1e293b',
+      headerBorder: '#334155',
+      buttonPrimary: '#60a5fa',
+      buttonSecondary: '#93c5fd',
+      success: '#34d399',
+      warning: '#fbbf24',
+      danger: '#f87171',
+      info: '#38bdf8',
+      iconPrimary: '#e2e8f0',
+      iconSecondary: '#94a3b8',
+      overlay: 'rgba(0, 0, 0, 0.7)',
+      gradientStart: '#7c3aed',
+      gradientEnd: '#4f46e5',
+    },
+  };
 
-  // Theme colors - All icons will be blue (#3b82f6)
-  const bgColor = theme === 'dark' ? 'bg-gray-900' : 'bg-gray-50';
-  const cardColor = theme === 'dark' ? 'bg-gray-800' : 'bg-white';
-  const textColor = theme === 'dark' ? 'text-gray-100' : 'text-gray-900';
-  const textSecondaryColor = theme === 'dark' ? 'text-gray-400' : 'text-gray-600';
-  const borderColor = theme === 'dark' ? 'border-gray-700' : 'border-gray-200';
-  const inputBgColor = theme === 'dark' ? 'bg-gray-800' : 'bg-gray-100';
-  const inputTextColor = theme === 'dark' ? 'text-gray-100' : 'text-gray-800';
-  const tabActiveColor = theme === 'dark' ? 'bg-blue-600' : 'bg-blue-500';
-  const tabInactiveColor = theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200';
-  const tabActiveText = 'text-white';
-  const tabInactiveTextColor = theme === 'dark' ? 'text-gray-300' : 'text-gray-600';
+  const currentColors = colors[theme];
 
-  const isAdmin = userInfo?.role?.toLowerCase() === 'admin';
+  // Get user data from context
+  const userData = {
+    name: user?.fullname || 'Guest User',
+    email: user?.email || 'No email provided',
+    role: user?.is_staff ? 'staff' : user?.is_verified ? 'verified' : 'member',
+  };
 
-  // Get user location
-  const getUserLocation = useCallback(async (): Promise<UserLocation | null> => {
-    setLoadingLocation(true);
+  // Menu items - updated routes to match Expo Router file structure
+  const menuItems: MenuItem[] = [
+    { id: 'dashboard', title: 'Dashboard', icon: 'grid-outline', route: '/' },
+    { id: 'profile', title: 'My Profile', icon: 'person-outline', route: '/dashboard/profile' },
+    { id: 'donation_types', title: 'Donation Types', icon: 'pricetags-outline', route: '/dashboard/donation-type' },
+    { id: 'reports', title: 'Reports', icon: 'document-text-outline', route: '/dashboard/reports' },
+    { id: 'visualization', title: 'Visualization', icon: 'bar-chart-outline', route: '/dashboard/visualization' },
+    { id: 'churches', title: 'Churches', icon: 'business-outline', route: '/dashboard/churches' },
+    { id: 'members', title: 'Members', icon: 'people-outline', route: '/dashboard/members' },
+    { id: 'settings', title: 'Settings', icon: 'settings-outline', route: '/dashboard/settings' },
+    { id: 'about', title: 'About', icon: 'information-circle-outline', route: '/dashboard/about' },
+  ];
+
+  // Format currency
+  const formatCurrency = (amount: number): string => {
+    return new Intl.NumberFormat('en-TZ', {
+      style: 'currency',
+      currency: 'TZS',
+      minimumFractionDigits: 0,
+    }).format(amount);
+  };
+
+  // Store data in AsyncStorage
+  const storeData = async (data: DonationSummaryData): Promise<void> => {
     try {
-      let { status } = await Location.getForegroundPermissionsAsync();
-      
-      if (status !== 'granted') {
-        const { status: newStatus } = await Location.requestForegroundPermissionsAsync();
-        
-        if (newStatus !== 'granted') {
-          setLocationPermissionDenied(true);
-          setLoadingLocation(false);
-          return null;
-        }
-        status = newStatus;
-      }
-
-      setLocationPermissionDenied(false);
-      
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-
-      const userLocationData: UserLocation = {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        accuracy: location.coords.accuracy ?? undefined,
-      };
-
-      setUserLocation(userLocationData);
-      
-      setMapRegion({
-        latitude: userLocationData.latitude,
-        longitude: userLocationData.longitude,
-        latitudeDelta: 0.0922,
-        longitudeDelta: 0.0421,
-      });
-
-      return userLocationData;
+      await AsyncStorage.setItem(STORAGE_KEYS.DONATION_SUMMARY, JSON.stringify(data));
+      await AsyncStorage.setItem(STORAGE_KEYS.LAST_UPDATED, new Date().toISOString());
+      await AsyncStorage.setItem(STORAGE_KEYS.CACHE_EXPIRY, (Date.now() + 60 * 60 * 1000).toString());
     } catch (error) {
-      console.error('Error getting location:', error);
-      setLocationPermissionDenied(true);
-      return null;
-    } finally {
-      setLoadingLocation(false);
+      console.error('Error storing data:', error);
+    }
+  };
+
+  // Load data from AsyncStorage
+  const loadFromStorage = async (): Promise<void> => {
+    try {
+      const storedData = await AsyncStorage.getItem(STORAGE_KEYS.DONATION_SUMMARY);
+      const storedTime = await AsyncStorage.getItem(STORAGE_KEYS.LAST_UPDATED);
+      
+      if (storedData) {
+        setSummaryData(JSON.parse(storedData));
+        setOffline(true);
+        setError(null);
+        
+        if (storedTime) {
+          setLastUpdated(new Date(storedTime));
+        }
+      } else {
+        setError('No data available offline');
+      }
+    } catch (error) {
+      console.error('Error loading from storage:', error);
+      setError('Failed to load stored data');
+    }
+  };
+
+  // Fetch data from API with authentication token
+  const fetchFromAPI = useCallback(async (): Promise<void> => {
+    try {
+      setError(null);
+      
+      // Get the authentication token from AsyncStorage
+      const token = await AsyncStorage.getItem('quickfix_access_token');
+      
+      if (!token) {
+        throw new Error('Authentication token not found. Please login again.');
+      }
+      
+      const response = await fetch(API_URL, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Session expired. Please login again.');
+        }
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data: DonationSummaryData = await response.json();
+      await storeData(data);
+      setSummaryData(data);
+      setOffline(false);
+      setLastUpdated(new Date());
+    } catch (error) {
+      console.error('API fetch error:', error);
+      await loadFromStorage();
+      if (!summaryData) {
+        if (error instanceof Error) {
+          setError(error.message);
+        } else {
+          setError('Failed to fetch data. Please check your connection.');
+        }
+      }
     }
   }, []);
 
-  // Fetch data from API
-  const fetchData = useCallback(async () => {
-    try {
+  // Initialize data on component mount
+  useEffect(() => {
+    const initializeData = async () => {
       setLoading(true);
-      
-      const [servicesResponse, garagesResponse] = await Promise.all([
-        fetch(`${API_BASE_URL}/services/`),
-        fetch(`${API_BASE_URL}/garages/`)
-      ]);
+      try {
+        await fetchFromAPI();
+      } catch (error) {
+        console.error('Initialization error:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    initializeData();
+  }, [fetchFromAPI]);
 
-      if (!servicesResponse.ok) throw new Error('Failed to fetch services');
-      if (!garagesResponse.ok) throw new Error('Failed to fetch garages');
-      
-      const servicesData = await servicesResponse.json();
-      const garagesData = await garagesResponse.json();
-      
-      const servicesArray = servicesData.results || servicesData;
-      const garagesArray = garagesData.results || garagesData;
-      
-      // Process services with garage info
-      const processedServices = servicesArray.map((service: any) => {
-        const foundGarage = garagesArray.find((g: any) => g.id === service.garage);
-        return {
-          ...service,
-          garage_id: service.garage,
-          garage_name: foundGarage?.name || 'Unknown Garage',
-          price: service.base_price || service.price || '0.00',
-          service_name: service.name?.split(' ')[0] || service.name || 'Service',
-          duration: service.duration || '1 hour',
-        };
-      });
-      
-      setServices(processedServices);
-      setGarages(garagesArray);
-      
-      // Apply filters
-      let filtered = processedServices;
-      if (selectedCategory !== 'all') {
-        filtered = filtered.filter(
-          (service: ServiceType) => 
-            service.name?.toLowerCase().includes(selectedCategory.toLowerCase()) ||
-            service.description?.toLowerCase().includes(selectedCategory.toLowerCase())
-        );
-      }
-      
-      if (searchQuery.trim() !== '') {
-        filtered = filtered.filter(
-          (service: ServiceType) => 
-            service.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            service.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            service.garage_name?.toLowerCase().includes(searchQuery.toLowerCase())
-        );
-      }
-      
-      setFilteredServices(filtered);
-      
-    } catch (error: any) {
-      console.error('Error fetching data:', error);
-      Alert.alert('Error', `Failed to load services: ${error.message}`);
-      setServices([]);
-      setGarages([]);
-      setFilteredServices([]);
+  // Handle pull-to-refresh
+  const onRefresh = useCallback(async (): Promise<void> => {
+    setRefreshing(true);
+    setError(null);
+    try {
+      await fetchFromAPI();
+    } catch (error) {
+      console.error('Refresh error:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [fetchFromAPI]);
+
+  // Handle retry
+  const handleRetry = async (): Promise<void> => {
+    setLoading(true);
+    setError(null);
+    try {
+      await fetchFromAPI();
+    } catch (error) {
+      console.error('Retry error:', error);
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, selectedCategory]);
+  };
 
-  // Initialize data
-  const initializeData = useCallback(async () => {
-    await Promise.all([getUserLocation(), fetchData()]);
-  }, [getUserLocation, fetchData]);
+  // Handle menu item press
+  const handleMenuItemPress = (item: MenuItem) => {
+    setActiveMenuItem(item.id);
+    setSidebarVisible(false);
+    router.push(item.route);
+  };
 
-  // Load user info and initialize data
-  useEffect(() => {
-    const loadUserInfo = async () => {
-      try {
-        const userInfoString = await AsyncStorage.getItem('userInfo');
-        if (userInfoString) {
-          const userData = JSON.parse(userInfoString);
-          setUserInfo(userData);
-        }
-      } catch (error) {
-        console.error('Error loading user info:', error);
-      }
-    };
-
-    loadUserInfo();
-    initializeData();
-  }, [initializeData]);
-
-  // Handle refresh
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await initializeData();
-    setRefreshing(false);
-  }, [initializeData]);
-
-  // Calculate distance between two points
-  const calculateDistance = useCallback((lat1: number, lon1: number, lat2: number, lon2: number): number => {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
-  }, []);
-
-  // Format distance for display
-  const formatDistance = useCallback((distance: number): string => {
-    if (distance < 1) {
-      return `${Math.round(distance * 1000)} m`;
-    }
-    return `${distance.toFixed(1)} km`;
-  }, []);
-
-  // Get service distance from user
-  const getServiceDistance = useCallback((service: ServiceType): string => {
-    if (!userLocation) return 'Distance N/A';
-
-    try {
-      const foundGarage = garages.find(g => g.id === service.garage);
-      if (!foundGarage || !foundGarage.latitude || !foundGarage.longitude) return 'Distance N/A';
-
-      const lat = parseFloat(foundGarage.latitude as string);
-      const lng = parseFloat(foundGarage.longitude as string);
-      
-      if (isNaN(lat) || isNaN(lng)) return 'Distance N/A';
-      
-      const distance = calculateDistance(
-        userLocation.latitude,
-        userLocation.longitude,
-        lat,
-        lng
-      );
-      return formatDistance(distance);
-    } catch (error) {
-      console.error('Error calculating distance:', error);
-      return 'Distance N/A';
-    }
-  }, [userLocation, garages, calculateDistance, formatDistance]);
+  // Handle profile circle press
+  const handleProfilePress = () => {
+    setSidebarVisible(false);
+    router.push('/dashboard/profile');
+  };
 
   // Handle logout
-  const handleLogout = useCallback(async () => {
+  const handleLogout = () => {
     Alert.alert(
       'Logout',
       'Are you sure you want to logout?',
       [
-        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Cancel', 
+          style: 'cancel',
+        },
         { 
           text: 'Logout', 
           style: 'destructive',
           onPress: async () => {
             try {
-              await AsyncStorage.removeItem('userToken');
-              await AsyncStorage.removeItem('userInfo');
-              replace('/login');
+              await contextLogout();
+              showMessage('Logged out successfully!', 'success');
+              setSidebarVisible(false);
+              setTimeout(() => {
+                router.replace('/login');
+              }, 500);
             } catch (error) {
-              console.error('Logout error:', error);
-              Alert.alert('Error', 'Failed to logout. Please try again.');
+              showMessage('Failed to logout', 'error');
             }
           }
         }
       ]
     );
-  }, [replace]);
+  };
 
-  // Admin menu actions
-  const adminActions: MenuAction[] = [
-    { 
-      label: 'Manage Services', 
-      icon: 'build', 
-      action: () => {
-        setShowAdminMenu(false);
-        push('/admin/services');
-      }
-    },
-    { 
-      label: 'Manage Garages', 
-      icon: 'business', 
-      action: () => {
-        setShowAdminMenu(false);
-        push('/admin/garages');
-      }
-    },
-    { 
-      label: 'View Bookings', 
-      icon: 'receipt', 
-      action: () => {
-        setShowAdminMenu(false);
-        push('/admin/bookings');
-      }
-    },
-  ];
-
-  // Profile menu actions
-  const profileMenuActions: MenuAction[] = [
-    { 
-      label: 'My Profile', 
-      icon: 'person', 
-      action: () => {
-        setShowProfileMenu(false);
-        push('/dashboard/profile');
-      }
-    },
-    { 
-      label: 'My Bookings', 
-      icon: 'receipt', 
-      action: () => {
-        setShowProfileMenu(false);
-        push('/dashboard/bookings');
-      }
-    },
-    { 
-      label: 'Settings', 
-      icon: 'settings', 
-      action: () => {
-        setShowProfileMenu(false);
-        push('/dashboard/settings');
-      }
-    },
-    { 
-      label: 'Logout', 
-      icon: 'build', 
-      action: () => {
-        setShowProfileMenu(false);
-        handleLogout();
-      }
-    },
-  ];
-
-  // Handle view garages
-  const handleViewGarages = useCallback(() => {
-    push('/dashboard/garages');
-  }, [push]);
-
-  // Get service icon based on service name
-  const getServiceIcon = useCallback((service: ServiceType) => {
-    const serviceName = service.name?.toLowerCase() || '';
-    const iconColor = '#3b82f6'; // Blue color
-    
-    if (serviceName.includes('oil') || serviceName.includes('lubrication')) {
-      return <MaterialCommunityIcons name="oil" size={28} color={iconColor} />;
-    } else if (serviceName.includes('brake')) {
-      return <MaterialCommunityIcons name="car-brake-abs" size={28} color={iconColor} />;
-    } else if (serviceName.includes('diagnostic') || serviceName.includes('scan')) {
-      return <MaterialIcons name="search" size={28} color={iconColor} />;
-    } else if (serviceName.includes('clean') || serviceName.includes('wash')) {
-      return <MaterialCommunityIcons name="car-wash" size={28} color={iconColor} />;
-    } else if (serviceName.includes('tire') || serviceName.includes('wheel')) {
-      return <FontAwesome5 name="cog" size={24} color={iconColor} />;
-    } else if (serviceName.includes('ac') || serviceName.includes('cool')) {
-      return <FontAwesome5 name="snowflake" size={24} color={iconColor} />;
-    } else if (serviceName.includes('engine')) {
-      return <MaterialCommunityIcons name="engine" size={28} color={iconColor} />;
-    } else {
-      return <MaterialIcons name="build" size={28} color={iconColor} />;
+  // Handle share app
+  const handleShareApp = async () => {
+    try {
+      await Share.share({
+        message: 'Check out our Donation Management System! Manage your church donations effectively.',
+        title: 'Donation App',
+      });
+      showMessage('App shared successfully!', 'success');
+    } catch (error) {
+      console.error('Error sharing app:', error);
+      showMessage('Failed to share the app', 'error');
     }
-  }, []);
+  };
+
+  // Handle rate app
+  const handleRateApp = async () => {
+    const storeUrl = Platform.OS === 'ios' 
+      ? 'https://apps.apple.com'
+      : 'https://play.google.com';
+    
+    const supported = await Linking.canOpenURL(storeUrl);
+    
+    if (supported) {
+      await Linking.openURL(storeUrl);
+      showMessage('Opening app store...', 'success');
+    } else {
+      showMessage('Could not open app store', 'error');
+    }
+  };
+
+  // Show message modal
+  const showMessage = (message: string, type: 'success' | 'error') => {
+    setModalMessage(message);
+    if (type === 'success') {
+      setShowSuccessModal(true);
+      setTimeout(() => setShowSuccessModal(false), 3000);
+    } else {
+      setShowErrorModal(true);
+      setTimeout(() => setShowErrorModal(false), 3000);
+    }
+  };
 
   // Loading state
-  if (loading && !refreshing) {
+  if (loading && !summaryData) {
     return (
-      <SafeAreaView className={`flex-1 ${bgColor}`}>
-        <StatusBar barStyle={theme === 'dark' ? 'light-content' : 'dark-content'} />
-        <View className="flex-1 justify-center items-center">
-          <ActivityIndicator size="large" color="#3b82f6" />
-          <Text className={`mt-4 ${textColor}`}>
-            {garageName ? `Loading services for ${garageName}...` : 'Loading services...'}
-          </Text>
-        </View>
-      </SafeAreaView>
+      <View style={{ flex: 1, backgroundColor: currentColors.background, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={currentColors.buttonPrimary} />
+        <Text style={{ color: currentColors.textSecondary, marginTop: 16, fontSize: 16 }}>Loading donation data...</Text>
+      </View>
     );
   }
 
-  return (
-    <SafeAreaView className={`flex-1 ${bgColor}`}>
-      <StatusBar barStyle={theme === 'dark' ? 'light-content' : 'dark-content'} />
-      
-      {/* Sidebar Component */}
-      <Sidebar 
-        isVisible={showSidebar}
-        onClose={() => setShowSidebar(false)}
-      />
-
-      {/* Admin Menu Modal */}
-      {isAdmin && (
-        <Modal
-          animationType="fade"
-          transparent={true}
-          visible={showAdminMenu}
-          onRequestClose={() => setShowAdminMenu(false)}
-        >
-          <TouchableOpacity 
-            className="flex-1 bg-black/50"
-            activeOpacity={1}
-            onPress={() => setShowAdminMenu(false)}
-          >
-            <View className="flex-1" style={{ paddingTop: SCREEN_HEIGHT * 0.1 }}>
-              <View className="absolute top-16 right-4 w-56">
-                <View className={`${cardColor} rounded-2xl shadow-2xl ${borderColor} border overflow-hidden`}>
-                  {adminActions.map((action, index) => (
-                    <TouchableOpacity
-                      key={index}
-                      className={`flex-row items-center px-4 py-3 ${
-                        index !== adminActions.length - 1 ? `border-b ${borderColor}` : ''
-                      }`}
-                      onPress={action.action}
-                    >
-                      <MaterialIcons 
-                        name={action.icon} 
-                        size={20} 
-                        color="#3b82f6"
-                      />
-                      <Text className={`ml-3 ${textColor} font-medium text-base`}>
-                        {action.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            </View>
-          </TouchableOpacity>
-        </Modal>
-      )}
-
-      {/* Profile Menu Modal */}
-      <Modal
-        animationType="fade"
-        transparent={true}
-        visible={showProfileMenu}
-        onRequestClose={() => setShowProfileMenu(false)}
-      >
+  // Error state
+  if (error && !summaryData) {
+    return (
+      <View style={{ flex: 1, backgroundColor: currentColors.background, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+        <Ionicons name="alert-circle-outline" size={80} color={currentColors.danger} />
+        <Text style={{ color: currentColors.danger, fontSize: 22, fontWeight: 'bold', marginTop: 24, marginBottom: 8 }}>
+          Unable to Load Data
+        </Text>
+        <Text style={{ color: currentColors.textSecondary, textAlign: 'center', marginBottom: 32, fontSize: 16 }}>
+          {error}
+        </Text>
         <TouchableOpacity 
-          className="flex-1 bg-black/50"
-          activeOpacity={1}
-          onPress={() => setShowProfileMenu(false)}
+          style={{ backgroundColor: currentColors.buttonPrimary, paddingHorizontal: 32, paddingVertical: 12, borderRadius: 25 }}
+          onPress={handleRetry}
         >
-          <View className="flex-1" style={{ paddingTop: SCREEN_HEIGHT * 0.1 }}>
-            <View className="absolute top-16 right-4 w-56">
-              <View className={`${cardColor} rounded-2xl shadow-2xl ${borderColor} border overflow-hidden`}>
-                {profileMenuActions.map((action, index) => (
+          <Text style={{ color: '#ffffff', fontSize: 16, fontWeight: '600' }}>Retry</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // Sidebar Component
+  const Sidebar = () => {
+    if (!sidebarVisible) return null;
+
+    return (
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={sidebarVisible}
+        onRequestClose={() => setSidebarVisible(false)}
+      >
+        <View style={{ flex: 1 }}>
+          <TouchableOpacity
+            style={{ flex: 1, backgroundColor: currentColors.overlay }}
+            onPress={() => setSidebarVisible(false)}
+            activeOpacity={1}
+          />
+          
+          <View style={{ 
+            position: 'absolute', 
+            top: 0, 
+            left: 0, 
+            bottom: 0, 
+            width: width * 0.8, 
+            backgroundColor: currentColors.cardBackground,
+            shadowColor: '#000',
+            shadowOffset: { width: 4, height: 0 },
+            shadowOpacity: 0.3,
+            shadowRadius: 20,
+            elevation: 20,
+          }}>
+            <LinearGradient
+              colors={[currentColors.gradientStart, currentColors.gradientEnd]}
+              style={{ 
+                padding: 24, 
+                borderBottomWidth: 1, 
+                borderBottomColor: currentColors.cardBorder,
+              }}
+            >
+              <TouchableOpacity
+                onPress={handleProfilePress}
+                style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}
+              >
+                <View style={{ 
+                  width: 60, 
+                  height: 60, 
+                  borderRadius: 30, 
+                  backgroundColor: '#ffffff',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginRight: 16,
+                  overflow: 'hidden',
+                  borderWidth: 3,
+                  borderColor: '#ffffff',
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.2,
+                  shadowRadius: 8,
+                  elevation: 8,
+                }}>
+                  <Ionicons name="person" size={32} color={currentColors.buttonPrimary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontWeight: 'bold', fontSize: 18, color: '#ffffff', marginBottom: 4 }}>
+                    {userData.name}
+                  </Text>
+                  <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.9)', marginBottom: 8 }}>
+                    {userData.email}
+                  </Text>
+                  <View style={{ 
+                    backgroundColor: userData.role === 'staff' ? '#ff5252' : userData.role === 'verified' ? '#4caf50' : '#3b82f6',
+                    paddingHorizontal: 12,
+                    paddingVertical: 4,
+                    borderRadius: 12,
+                    alignSelf: 'flex-start'
+                  }}>
+                    <Text style={{ fontSize: 12, color: '#ffffff', fontWeight: '600' }}>
+                      {userData.role.charAt(0).toUpperCase() + userData.role.slice(1)}
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            </LinearGradient>
+
+            <ScrollView 
+              style={{ flex: 1 }}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 20 }}
+            >
+              <View style={{ padding: 16 }}>
+                <Text style={{ 
+                  fontSize: 12, 
+                  textTransform: 'uppercase', 
+                  fontWeight: '700', 
+                  marginBottom: 16,
+                  color: currentColors.textSecondary,
+                  letterSpacing: 1,
+                }}>
+                  Main Menu
+                </Text>
+                
+                {menuItems.map((item) => (
                   <TouchableOpacity
-                    key={index}
-                    className={`flex-row items-center px-4 py-3 ${
-                      index !== profileMenuActions.length - 1 ? `border-b ${borderColor}` : ''
-                    }`}
-                    onPress={action.action}
+                    key={item.id}
+                    onPress={() => handleMenuItemPress(item)}
+                    style={{ 
+                      flexDirection: 'row', 
+                      alignItems: 'center', 
+                      padding: 14, 
+                      borderRadius: 10,
+                      marginBottom: 6,
+                      backgroundColor: activeMenuItem === item.id ? 
+                        (theme === 'dark' ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.1)') : 'transparent',
+                      borderLeftWidth: activeMenuItem === item.id ? 4 : 0,
+                      borderLeftColor: currentColors.buttonPrimary,
+                    }}
                   >
-                    <MaterialIcons 
-                      name={action.icon} 
-                      size={20} 
-                      color="#3b82f6"
-                    />
-                    <Text className={`ml-3 ${textColor} font-medium text-base`}>
-                      {action.label}
+                    <Ionicons name={item.icon as any} size={24} color={activeMenuItem === item.id ? currentColors.buttonPrimary : currentColors.iconSecondary} />
+                    <Text style={{ 
+                      marginLeft: 16, 
+                      fontWeight: '500', 
+                      color: currentColors.textPrimary,
+                      fontSize: 15,
+                    }}>
+                      {item.title}
                     </Text>
                   </TouchableOpacity>
                 ))}
-              </View>
-            </View>
-          </View>
-        </TouchableOpacity>
-      </Modal>
 
-      {/* Main Content */}
-      <View className="flex-1" style={{ paddingTop: Platform.OS === 'ios' ? 0 : 30 }}>
-        {/* Header Section */}
-        <View className={`px-4 pt-4 pb-3 ${cardColor} shadow-lg ${borderColor} border-b`}>
-          <View className="flex-row justify-between items-center mb-4">
-            <View className="flex-row items-center">
-              <TouchableOpacity 
-                className={`w-12 h-12 rounded-full ${
-                  theme === 'dark' ? 'bg-gray-800' : 'bg-gray-200'
-                } items-center justify-center mr-3 shadow-md`}
-                onPress={() => setShowSidebar(true)}
-              >
-                <Ionicons name="menu" size={28} color="#3b82f6" />
-              </TouchableOpacity>
-              
-              <View className={`w-14 h-14 rounded-full ${
-                theme === 'dark' 
-                  ? 'bg-gray-800' 
-                  : 'bg-gray-200'
-              } items-center justify-center mr-3 shadow-lg`}>
-                <FontAwesome5 name="tools" size={24} color="blue" />
+                <View style={{ 
+                  marginTop: 24, 
+                  padding: 20, 
+                  borderRadius: 16,
+                  backgroundColor: theme === 'dark' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(16, 185, 129, 0.1)',
+                  borderWidth: 1,
+                  borderColor: theme === 'dark' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(16, 185, 129, 0.2)',
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                    <Ionicons name="share-social" size={28} color="#10b981" />
+                    <Text style={{ 
+                      marginLeft: 12, 
+                      fontWeight: 'bold', 
+                      fontSize: 16,
+                      color: theme === 'dark' ? '#34d399' : '#059669'
+                    }}>
+                      Share Donation App
+                    </Text>
+                  </View>
+                  <Text style={{ 
+                    color: theme === 'dark' ? '#34d399' : '#059669', 
+                    marginBottom: 16, 
+                    fontSize: 14,
+                    lineHeight: 20,
+                  }}>
+                    Help others manage their donations effectively!
+                  </Text>
+                  <TouchableOpacity
+                    style={{ 
+                      backgroundColor: '#10b981', 
+                      paddingVertical: 14, 
+                      borderRadius: 12, 
+                      alignItems: 'center',
+                      flexDirection: 'row',
+                      justifyContent: 'center',
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowOpacity: 0.2,
+                      shadowRadius: 8,
+                      elevation: 4,
+                    }}
+                    onPress={handleShareApp}
+                  >
+                    <Ionicons name="share-outline" size={20} color="#ffffff" />
+                    <Text style={{ color: '#ffffff', fontWeight: 'bold', fontSize: 16, marginLeft: 8 }}>
+                      Share App
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-              
-              <View>
-                <Text className={`font-bold ${textColor} text-2xl`}>
-                  {garageName || 'Quick Fix'}
-                </Text>
-                <Text className={`${textSecondaryColor} text-sm`}>
-                  {garageName ? 'Available Services' : 'Find & Book Services'}
-                </Text>
-              </View>
-            </View>
-            
-            <View className="flex-row space-x-3 items-center">
-              {isAdmin && (
-                <TouchableOpacity 
-                  className={`w-12 h-12 rounded-full ${
-                    theme === 'dark' 
-                      ? 'bg-gray-800' 
-                      : 'bg-gray-200'
-                  } items-center justify-center shadow-md`}
-                  onPress={() => setShowAdminMenu(true)}
-                >
-                  <MaterialIcons name="admin-panel-settings" size={24} color="blue" />
-                </TouchableOpacity>
-              )}
-              
-              <TouchableOpacity 
-                className={`w-12 h-12 rounded-full ${
-                  theme === 'dark' 
-                    ? 'bg-gray-800' 
-                    : 'bg-gray-200'
-                } items-center justify-center shadow-md`}
-                onPress={() => setShowProfileMenu(true)}
-              >
-                <Ionicons name="person" size={24} color="blue" />
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                className={`w-12 h-12 rounded-full ${
-                  theme === 'dark' 
-                    ? 'bg-gradient-to-r from-orange-700 to-red-700' 
-                    : 'bg-gradient-to-r from-orange-500 to-red-500'
-                } items-center justify-center shadow-md`}
-                onPress={() => push('/dashboard/bookings')}
-              >
-                <Ionicons name="calendar" size={24} color="blue" />
-              </TouchableOpacity>
-            </View>
-          </View>
+            </ScrollView>
 
-          {/* Search Bar */}
-          <View className="relative mb-4">
-            <TextInput
-              className={`${inputBgColor} rounded-full px-5 py-4 pl-12 ${inputTextColor} font-medium ${borderColor} border text-base`}
-              placeholder="Search services, garages, parts..."
-              placeholderTextColor={textSecondaryColor}
-              value={searchQuery}
-              onChangeText={(text) => {
-                setSearchQuery(text);
-                let filtered = services;
-                if (selectedCategory !== 'all') {
-                  filtered = filtered.filter(
-                    (service: ServiceType) => 
-                      service.name?.toLowerCase().includes(selectedCategory.toLowerCase()) ||
-                      service.description?.toLowerCase().includes(selectedCategory.toLowerCase())
-                  );
-                }
-                
-                if (text.trim() !== '') {
-                  filtered = filtered.filter(
-                    (service: ServiceType) => 
-                      service.name?.toLowerCase().includes(text.toLowerCase()) ||
-                      service.description?.toLowerCase().includes(text.toLowerCase()) ||
-                      service.garage_name?.toLowerCase().includes(text.toLowerCase())
-                  );
-                }
-                setFilteredServices(filtered);
-              }}
-            />
-            <View className="absolute left-4 top-4">
-              <Ionicons name="search" size={20} color="grey" />
-            </View>
-            {searchQuery && (
-              <TouchableOpacity 
-                className="absolute right-4 top-4"
-                onPress={() => {
-                  setSearchQuery('');
-                  setFilteredServices(services);
+            <View style={{ padding: 20, borderTopWidth: 1, borderTopColor: currentColors.cardBorder }}>
+              <TouchableOpacity
+                style={{ 
+                  padding: 18, 
+                  borderRadius: 12,
+                  flexDirection: 'row', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  backgroundColor: theme === 'dark' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(254, 226, 226, 1)',
+                  borderWidth: 1,
+                  borderColor: theme === 'dark' ? 'rgba(239, 68, 68, 0.3)' : '#fecaca',
                 }}
+                onPress={handleLogout}
               >
-                <Ionicons name="close-circle" size={20} color={textSecondaryColor} />
+                <Ionicons name="log-out" size={22} color="#ef4444" />
+                <Text style={{ marginLeft: 12, fontWeight: 'bold', fontSize: 16, color: '#ef4444' }}>Logout</Text>
               </TouchableOpacity>
-            )}
+            </View>
           </View>
-
-          {/* Browse All Garages Button */}
-          {!garageName && (
-            <TouchableOpacity
-              className={`flex-row items-center justify-center py-3.5 rounded-xl ${
-                theme === 'dark' 
-                  ? 'bg-gray-800' 
-                  : 'bg-gray-200'
-              } shadow-lg`}
-              onPress={handleViewGarages}
-            >
-              <View className="w-10 h-10 rounded-full bg-gray/20 items-center justify-center mr-3">
-                <Ionicons name="business" size={22} color="grey" />
-              </View>
-              <Text className="text-gray-700 font-bold text-lg flex-1">
-                Browse All Garages
-              </Text>
-              <View className="flex-row items-center">
-                <Text className="text-gray-700 text-sm mr-3">
-                  {garages.length} available
-                </Text>
-                <MaterialIcons name="arrow-forward-ios" size={16} color="grey" />
-              </View>
-            </TouchableOpacity>
-          )}
         </View>
+      </Modal>
+    );
+  };
 
-        {/* Tabs */}
-        <View className={`flex-row px-4 py-3 ${cardColor} ${borderColor} border-b shadow-sm`}>
-          <TouchableOpacity 
-            className={`flex-1 py-3 rounded-xl mr-2 items-center ${activeTab === 'services' ? tabActiveColor : tabInactiveColor}`}
-            onPress={() => setActiveTab('services')}
-          >
-            <View className="flex-row items-center">
-              <Ionicons 
-                name="grid" 
-                size={20} 
-                color={activeTab === 'services' ? 'white' : '#3b82f6'}
-              />
-              <Text className={`font-semibold text-base ml-2 ${activeTab === 'services' ? tabActiveText : tabInactiveTextColor}`}>
-                Services ({filteredServices.length})
-              </Text>
-            </View>
-          </TouchableOpacity>
+  // Summary Stats Card Component
+  const StatCard = ({ title, value, icon, color }: { title: string; value: string; icon: string; color: string }) => (
+    <View style={{ 
+      width: '48%', 
+      backgroundColor: currentColors.cardBackground, 
+      borderRadius: 16, 
+      padding: 20, 
+      marginBottom: 16, 
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+      elevation: 4,
+      borderWidth: 1,
+      borderColor: currentColors.cardBorder,
+    }}>
+      <View style={{ 
+        width: 48, 
+        height: 48, 
+        borderRadius: 24, 
+        backgroundColor: `${color}20`,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16,
+      }}>
+        <Ionicons name={icon as any} size={26} color={color} />
+      </View>
+      <Text style={{ fontSize: 20, fontWeight: 'bold', color: currentColors.textPrimary, marginTop: 4 }}>
+        {value}
+      </Text>
+      <Text style={{ color: currentColors.textSecondary, fontSize: 14, marginTop: 4, fontWeight: '500' }}>
+        {title}
+      </Text>
+    </View>
+  );
 
-          <TouchableOpacity 
-            className={`flex-1 py-3 rounded-xl ml-2 items-center ${activeTab === 'map' ? tabActiveColor : tabInactiveColor}`}
-            onPress={() => setActiveTab('map')}
-          >
-            <View className="flex-row items-center">
-              <Ionicons 
-                name="map" 
-                size={20} 
-                color={activeTab === 'map' ? 'white' : '#3b82f6'}
-              />
-              <Text className={`font-semibold text-base ml-2 ${activeTab === 'map' ? tabActiveText : tabInactiveTextColor}`}>
-                Map View
-              </Text>
-            </View>
-          </TouchableOpacity>
+  // Type Distribution Card Component
+  const TypeDistributionCard = ({ item, index }: { item: TypeDistribution; index: number }) => (
+    <View key={index} style={{ 
+      backgroundColor: currentColors.cardBackground, 
+      borderRadius: 16, 
+      padding: 20, 
+      marginBottom: 16, 
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+      elevation: 4,
+      borderWidth: 1,
+      borderColor: currentColors.cardBorder,
+    }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ 
+            width: 44, 
+            height: 44, 
+            borderRadius: 22, 
+            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginRight: 12,
+          }}>
+            <Ionicons name="pie-chart-outline" size={22} color={currentColors.buttonPrimary} />
+          </View>
+          <View>
+            <Text style={{ color: currentColors.textPrimary, fontWeight: '600', fontSize: 18, marginBottom: 2 }}>
+              {item.donation_type.charAt(0).toUpperCase() + item.donation_type.slice(1)}
+            </Text>
+            <Text style={{ color: currentColors.textSecondary, fontSize: 14 }}>
+              {item.count} donations
+            </Text>
+          </View>
         </View>
+        <Text style={{ 
+          fontSize: 22, 
+          fontWeight: 'bold', 
+          color: currentColors.buttonPrimary,
+          backgroundColor: theme === 'dark' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.1)',
+          paddingHorizontal: 16,
+          paddingVertical: 6,
+          borderRadius: 12,
+        }}>
+          {item.percentage.toFixed(1)}%
+        </Text>
+      </View>
+      
+      <View style={{ height: 8, backgroundColor: theme === 'dark' ? '#334155' : '#e5e7eb', borderRadius: 4, overflow: 'hidden', marginBottom: 16 }}>
+        <View style={{ 
+          height: '100%', 
+          backgroundColor: currentColors.buttonPrimary, 
+          borderRadius: 4, 
+          width: `${item.percentage}%`,
+        }} />
+      </View>
+      
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Ionicons name="list-outline" size={18} color={currentColors.textSecondary} />
+          <Text style={{ color: currentColors.textSecondary, fontSize: 15, marginLeft: 6, fontWeight: '500' }}>
+            {item.count} donations
+          </Text>
+        </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Ionicons name="wallet-outline" size={18} color={currentColors.textSecondary} />
+          <Text style={{ color: currentColors.textSecondary, fontSize: 15, marginLeft: 6, fontWeight: '500' }}>
+            {formatCurrency(item.total)}
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
 
-        {/* Services Tab Content */}
-        {activeTab === 'services' ? (
-          <ScrollView 
-            className="flex-1"
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={handleRefresh}
-                colors={['#3b82f6']}
-                tintColor="#3b82f6"
-              />
-            }
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ 
-              paddingBottom: 100,
-              backgroundColor: theme === 'dark' ? '#111827' : '#f9fafb'
+  // Top Donor Card Component
+  const TopDonorCard = ({ donor, index }: { donor: TopDonor; index: number }) => (
+    <View key={donor.user__id} style={{ 
+      backgroundColor: currentColors.cardBackground, 
+      borderRadius: 16, 
+      padding: 20, 
+      marginBottom: 16, 
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+      elevation: 4,
+      borderWidth: 1,
+      borderColor: currentColors.cardBorder,
+    }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}>
+        <View style={{ 
+          width: 50, 
+          height: 50, 
+          borderRadius: 25, 
+          backgroundColor: currentColors.buttonPrimary,
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginRight: 16,
+          shadowColor: currentColors.buttonPrimary,
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.3,
+          shadowRadius: 8,
+          elevation: 6,
+        }}>
+          <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 20 }}>#{index + 1}</Text>
+        </View>
+        
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: currentColors.textPrimary, fontWeight: '600', fontSize: 18, marginBottom: 4 }}>
+            {donor.user__fullname}
+          </Text>
+          <Text style={{ color: currentColors.textSecondary, fontSize: 15, marginBottom: 4 }}>
+            {donor.user__mobile_number}
+          </Text>
+        </View>
+      </View>
+      
+      <View style={{ 
+        flexDirection: 'row', 
+        backgroundColor: theme === 'dark' ? '#1e293b' : '#f8fafc', 
+        borderRadius: 14, 
+        padding: 16,
+      }}>
+        <View style={{ flex: 1, alignItems: 'center' }}>
+          <Ionicons name="cash-outline" size={22} color={currentColors.success} />
+          <Text style={{ color: currentColors.textPrimary, fontWeight: 'bold', fontSize: 20, marginTop: 6 }}>
+            {formatCurrency(donor.total_donated)}
+          </Text>
+          <Text style={{ color: currentColors.textSecondary, fontSize: 13, fontWeight: '500' }}>Total Donated</Text>
+        </View>
+        
+        <View style={{ width: 1, backgroundColor: theme === 'dark' ? '#334155' : '#e2e8f0', marginHorizontal: 16 }} />
+        
+        <View style={{ flex: 1, alignItems: 'center' }}>
+          <Ionicons name="receipt-outline" size={22} color={currentColors.warning} />
+          <Text style={{ color: currentColors.textPrimary, fontWeight: 'bold', fontSize: 20, marginTop: 6 }}>
+            {donor.donation_count}
+          </Text>
+          <Text style={{ color: currentColors.textSecondary, fontSize: 13, fontWeight: '500' }}>Donations</Text>
+        </View>
+      </View>
+    </View>
+  );
+
+  // Monthly Trend Card Component
+  const MonthlyTrendCard = ({ month, index }: { month: MonthlyTrend; index: number }) => (
+    <View key={index} style={{ 
+      backgroundColor: currentColors.cardBackground, 
+      borderRadius: 16, 
+      padding: 20, 
+      marginBottom: 16, 
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.1,
+      shadowRadius: 8,
+      elevation: 4,
+      borderWidth: 1,
+      borderColor: currentColors.cardBorder,
+    }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 20 }}>
+        <View style={{ 
+          width: 50, 
+          height: 50, 
+          borderRadius: 25, 
+          backgroundColor: 'rgba(245, 158, 11, 0.1)',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginRight: 16,
+        }}>
+          <Ionicons name="calendar-outline" size={24} color={currentColors.warning} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: currentColors.textPrimary, fontWeight: '600', fontSize: 18, marginBottom: 4 }}>
+            {new Date(month.month + '-01').toLocaleDateString('en-US', { year: 'numeric', month: 'long' })}
+          </Text>
+          <Text style={{ color: currentColors.textSecondary, fontSize: 15 }}>Monthly Performance</Text>
+        </View>
+      </View>
+      
+      <View style={{ 
+        flexDirection: 'row', 
+        backgroundColor: theme === 'dark' ? '#1e293b' : '#f8fafc', 
+        borderRadius: 14, 
+        padding: 16,
+      }}>
+        <View style={{ flex: 1, alignItems: 'center' }}>
+          <Text style={{ color: currentColors.textPrimary, fontWeight: 'bold', fontSize: 22, marginBottom: 6 }}>
+            {formatCurrency(month.total)}
+          </Text>
+          <Text style={{ color: currentColors.textSecondary, fontSize: 14, fontWeight: '500' }}>Total Amount</Text>
+        </View>
+        
+        <View style={{ width: 1, backgroundColor: theme === 'dark' ? '#334155' : '#e2e8f0', marginHorizontal: 16 }} />
+        
+        <View style={{ flex: 1, alignItems: 'center' }}>
+          <Text style={{ color: currentColors.textPrimary, fontWeight: 'bold', fontSize: 22, marginBottom: 6 }}>
+            {month.count}
+          </Text>
+          <Text style={{ color: currentColors.textSecondary, fontSize: 14, fontWeight: '500' }}>Donations</Text>
+        </View>
+      </View>
+    </View>
+  );
+
+  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: currentColors.background }}>
+      <StatusBar 
+        barStyle={theme === 'dark' ? 'light-content' : 'dark-content'} 
+        backgroundColor={currentColors.headerBackground} 
+      />
+      
+      {/* Header */}
+      <View style={{
+        backgroundColor: currentColors.headerBackground,
+        paddingHorizontal: 20,
+        paddingTop: Platform.OS === 'ios' ? 60 : 40,
+        paddingBottom: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: currentColors.headerBorder,
+      }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <TouchableOpacity
+            onPress={() => setSidebarVisible(true)}
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 22,
+              backgroundColor: theme === 'dark' ? '#334155' : '#e5e7eb',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
-            <View className="px-4 py-4">
-              {/* Location Status Card */}
-              <TouchableOpacity 
-                className={`flex-row items-center justify-between py-4 px-5 rounded-xl ${borderColor} border ${
-                  theme === 'dark' ? 'bg-gray-800' : 'bg-gray-100'
-                } shadow-sm mb-6`}
-                onPress={() => getUserLocation()}
-                disabled={loadingLocation}
-              >
-                <View className="flex-row items-center">
-                  <View className={`w-10 h-10 rounded-full ${
-                    loadingLocation ? 'bg-gray-500' : 
-                    locationPermissionDenied ? 'bg-red-500' : 
-                    'bg-blue-500'
-                  } items-center justify-center mr-3`}>
-                    <Ionicons 
-                      name="location" 
-                      size={22} 
-                      color="white" 
-                    />
-                  </View>
-                  <View>
-                    <Text className={`font-bold ${textColor} text-base`}>
-                      {loadingLocation ? 'Getting Location...' : 
-                       locationPermissionDenied ? 'Location Disabled' :
-                       userLocation ? 'Location Active' : 'Enable Location'}
-                    </Text>
-                    <Text className={`${textSecondaryColor} text-sm`}>
-                      {loadingLocation ? 'Please wait...' : 
-                       locationPermissionDenied ? 'Tap to enable location services' :
-                       userLocation ? '✓ Using your current location' : 'Tap to enable location access'}
-                    </Text>
-                  </View>
-                </View>
-                {userLocation && !loadingLocation && (
-                  <View className="px-3 py-1 bg-blue-100 dark:bg-blue-900/30 rounded-full">
-                    <Text className="text-blue-600 dark:text-blue-400 text-xs font-bold">ACTIVE</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-
-              {/* Services List */}
-              <View>
-                {filteredServices.length === 0 ? (
-                  <View className={`${cardColor} rounded-2xl p-8 items-center justify-center ${borderColor} border shadow-sm`}>
-                    <Ionicons name="construct-outline" size={72} color="#3b82f6" />
-                    <Text className={`${textColor} text-xl font-bold mt-4`}>No Services Found</Text>
-                    <Text className={`${textSecondaryColor} text-sm mt-2 text-center mb-6`}>
-                      {searchQuery 
-                        ? 'No services match your search. Try different keywords.'
-                        : 'No services available in this category.'
-                      }
-                    </Text>
-                    {(searchQuery || selectedCategory !== 'all') && (
-                      <TouchableOpacity
-                        className="px-5 py-3 bg-blue-500 rounded-lg shadow"
-                        onPress={() => {
-                          setSearchQuery('');
-                          setSelectedCategory('all');
-                          setFilteredServices(services);
-                        }}
-                      >
-                        <Text className="text-white font-semibold text-sm">Show All Services</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                ) : (
-                  <View className="space-y-4">
-                    {filteredServices.map((service) => {
-                      const distanceText = getServiceDistance(service);
-                      
-                      return (
-                        <TouchableOpacity
-                          key={service.id}
-                          className={`${cardColor} rounded-2xl p-5 shadow-lg ${borderColor} border`}
-                          onPress={() => setSelectedService(service)}
-                          activeOpacity={0.7}
-                        >
-                          <View className="flex-row items-start">
-                            <View className={`w-16 h-16 rounded-xl ${
-                              theme === 'dark' ? 'bg-gray-700' : 'bg-gray-100'
-                            } items-center justify-center mr-4 shadow-sm`}>
-                              {getServiceIcon(service)}
-                            </View>
-                            
-                            <View className="flex-1">
-                              <Text className={`text-xl font-bold ${textColor} mb-2`} numberOfLines={1}>
-                                {service.name || 'Unnamed Service'}
-                              </Text>
-                              
-                              {!garageName && service.garage_name && (
-                                <View className="flex-row items-center mb-2">
-                                  <Ionicons name="business" size={14} color="#3b82f6" />
-                                  <Text className={`ml-2 text-sm ${textSecondaryColor}`}>
-                                    {service.garage_name}
-                                  </Text>
-                                </View>
-                              )}
-                              
-                              {service.description && (
-                                <Text className={`mb-3 ${textSecondaryColor}`} numberOfLines={2}>
-                                  {service.description}
-                                </Text>
-                              )}
-                              
-                              <View className="flex-row items-center justify-between">
-                                <View className="flex-row items-center space-x-4">
-                                  <View className="flex-row items-center">
-                                    <Ionicons name="time" size={16} color="#3b82f6" />
-                                    <Text className={`ml-1 ${textSecondaryColor}`}>{service.duration}</Text>
-                                  </View>
-                                  
-                                  <View className="flex-row items-center">
-                                    <Ionicons name="location" size={14} color="#3b82f6" />
-                                    <Text className={`ml-1 text-sm ${textSecondaryColor}`}>
-                                      {distanceText}
-                                    </Text>
-                                  </View>
-                                </View>
-                                
-                                <View>
-                                  <Text className="text-blue-500">
-                                    {parseFloat(service.base_price || '0').toFixed(2)} Tsh
-                                  </Text>
-                                </View>
-                              </View>
-                            </View>
-                          </View>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                )}
-              </View>
-            </View>
-          </ScrollView>
-        ) : (
-          /* Map View Tab Content */
-          <View className="flex-1">
-            {mapRegion ? (
-              <MapView
-                ref={mapRef}
-                style={{ width: '100%', height: '100%' }}
-                provider={PROVIDER_GOOGLE}
-                region={mapRegion}
-                showsUserLocation={true}
-                showsMyLocationButton={true}
-                showsCompass={true}
-                showsScale={true}
-              >
-                {/* User Location Marker */}
-                {userLocation && (
-                  <Marker
-                    coordinate={{
-                      latitude: userLocation.latitude,
-                      longitude: userLocation.longitude,
-                    }}
-                    title="Your Location"
-                    description="You are here"
-                    pinColor="#3b82f6"
-                  >
-                    <View className="items-center justify-center">
-                      <View className="w-12 h-12 bg-blue-500/20 rounded-full items-center justify-center">
-                        <View className="w-8 h-8 bg-blue-500 rounded-full items-center justify-center">
-                          <Ionicons name="person" size={16} color="white" />
-                        </View>
-                      </View>
-                    </View>
-                  </Marker>
-                )}
-                
-                {/* Service Location Markers */}
-                {filteredServices.map((service) => {
-                  const foundGarage = garages.find(g => g.id === service.garage);
-                  if (!foundGarage || !foundGarage.latitude || !foundGarage.longitude) return null;
-                  
-                  const lat = parseFloat(foundGarage.latitude as string);
-                  const lng = parseFloat(foundGarage.longitude as string);
-                  if (isNaN(lat) || isNaN(lng)) return null;
-                  
-                  return (
-                    <Marker
-                      key={service.id}
-                      coordinate={{
-                        latitude: lat,
-                        longitude: lng,
-                      }}
-                      title={service.name || 'Service'}
-                      description={`${foundGarage.name} - Tsh${parseFloat(service.base_price || '0').toFixed(2)}`}
-                      onPress={() => setSelectedService(service)}
-                    >
-                      <View className="items-center justify-center">
-                        <View className={`w-14 h-14 rounded-full ${
-                          service.id === selectedService?.id ? 'bg-orange-500/30' : 'bg-blue-500/30'
-                        } items-center justify-center`}>
-                          <View className={`w-10 h-10 rounded-full ${
-                            service.id === selectedService?.id ? 'bg-orange-500' : 'bg-blue-500'
-                          } items-center justify-center`}>
-                            <Ionicons name="build" size={20} color="white" />
-                          </View>
-                        </View>
-                      </View>
-                    </Marker>
-                  );
-                })}
-              </MapView>
-            ) : (
-              <View className="flex-1 items-center justify-center">
-                <ActivityIndicator size="large" color="#3b82f6" />
-                <Text className={`mt-4 ${textColor}`}>Loading map...</Text>
-              </View>
+            <Ionicons name="menu-outline" size={26} color={currentColors.iconPrimary} />
+          </TouchableOpacity>
+          
+          <View style={{ flex: 1, marginHorizontal: 12 }}>
+            <Text style={{ fontSize: 22, fontWeight: 'bold', color: currentColors.textPrimary, textAlign: 'center' }}>
+              Donation Summary
+            </Text>
+            {lastUpdated && (
+              <Text style={{ fontSize: 13, color: currentColors.textSecondary, textAlign: 'center', marginTop: 4 }}>
+                {offline ? '📱 Offline - ' : '🌐 '}
+                Updated: {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </Text>
             )}
           </View>
-        )}
-        
-        {/* Footer Spacer */}
-        <View className={`absolute bottom-0 left-0 right-0 h-32 ${
-          theme === 'dark' ? 'bg-gray-900' : 'bg-gray-50'
-        }`}>
-           <View className="flex-row justify-center items-center">
-            <Text className={`text-sm ${textSecondaryColor}`}>
-              @QuickFix 2025 • Vol 0.0.1
-            </Text>
-         
+          
+          {offline && (
+            <View style={{ 
+              flexDirection: 'row', 
+              alignItems: 'center', 
+              backgroundColor: theme === 'dark' ? 'rgba(220, 38, 38, 0.2)' : '#fee2e2', 
+              paddingHorizontal: 12, 
+              paddingVertical: 6, 
+              borderRadius: 16,
+            }}>
+              <Ionicons name="cloud-offline-outline" size={16} color="#dc2626" />
+              <Text style={{ color: '#dc2626', fontSize: 13, fontWeight: '600', marginLeft: 6 }}>Offline</Text>
+            </View>
+          )}
         </View>
-          </View>
-       
-        
       </View>
 
-      {/* Service Detail Modal */}
-      {selectedService && (
-        <Modal
-          animationType="fade"
-          transparent={true}
-          visible={!!selectedService}
-          onRequestClose={() => setSelectedService(null)}
-        >
-          <TouchableOpacity 
-            className="flex-1 bg-black/70 justify-center items-center"
-            activeOpacity={1}
-            onPress={() => setSelectedService(null)}
+      <ScrollView
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[currentColors.buttonPrimary]}
+            tintColor={currentColors.buttonPrimary}
+          />
+        }
+        style={{ flex: 1 }}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 100 }}
+      >
+        <View style={{ padding: 20 }}>
+          {/* Welcome Section */}
+          <LinearGradient
+            colors={[currentColors.gradientStart, currentColors.gradientEnd]}
+            style={{ 
+              borderRadius: 20, 
+              padding: 24, 
+              marginBottom: 24,
+            }}
           >
-            <TouchableOpacity 
-              activeOpacity={1}
-              onPress={(e) => e.stopPropagation()}
-              className={`${cardColor} rounded-3xl p-6 m-5 w-[90%] max-w-md shadow-2xl`}
+            <TouchableOpacity
+              onPress={handleProfilePress}
+              style={{ flexDirection: 'row', alignItems: 'center' }}
             >
-              <View className="flex-row justify-between items-center mb-4">
-                <Text className={`text-2xl font-bold ${textColor}`}>Service Details</Text>
-                <TouchableOpacity 
-                  className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 items-center justify-center"
-                  onPress={() => setSelectedService(null)}
-                >
-                  <Ionicons name="close" size={24} color="#3b82f6" />
-                </TouchableOpacity>
+              <View style={{ 
+                width: 60, 
+                height: 60, 
+                borderRadius: 30, 
+                backgroundColor: 'rgba(255,255,255,0.2)',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginRight: 16,
+              }}>
+                <Ionicons name="person-circle-outline" size={40} color="#ffffff" />
               </View>
-              
-              <View className="flex-row items-center mb-4">
-                <View className={`w-16 h-16 rounded-xl ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-100'} items-center justify-center mr-4 shadow`}>
-                  {getServiceIcon(selectedService)}
-                </View>
-                <View className="flex-1">
-                  <Text className={`text-xl font-bold ${textColor}`}>{selectedService.name || 'Service'}</Text>
-                  <Text className={`text-sm ${textSecondaryColor}`}>
-                    {selectedService.garage_name || 'Available at multiple garages'}
-                  </Text>
-                </View>
-              </View>
-              
-              <Text className="text-3xl font-bold text-blue-500 mb-2">
-                {parseFloat(selectedService.base_price || '0').toFixed(2)} Tsh
-              </Text>
-              
-              <View className="flex-row items-center mb-4">
-                <Ionicons name="time" size={16} color="#3b82f6" />
-                <Text className={`ml-2 ${textSecondaryColor}`}>{selectedService.duration}</Text>
-                <View className="ml-4 flex-row items-center">
-                  <Ionicons name="location" size={14} color="#3b82f6" />
-                  <Text className={`ml-1 text-sm ${textSecondaryColor}`}>
-                    {getServiceDistance(selectedService)}
-                  </Text>
-                </View>
-              </View>
-              
-              {selectedService.description && (
-                <Text className={`${textColor} mb-6`}>{selectedService.description}</Text>
-              )}
-              
-              <View className="space-y-3">
-                <TouchableOpacity
-                  className="py-3 bg-blue-500 rounded-xl items-center shadow"
-                  onPress={() => {
-                    setSelectedService(null);
-                    handleViewGarages();
-                  }}
-                >
-                  <Text className="text-white font-bold text-base">Get Directions</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  className="py-3 bg-blue-600 rounded-xl items-center shadow"
-                  onPress={() => {
-                    setSelectedService(null);
-                    push('/dashboard/bookings');
-                  }}
-                >
-                  <Text className="text-white font-bold text-base">Book Service</Text>
-                </TouchableOpacity>
-                
-                <TouchableOpacity
-                  className="py-3 bg-gray-200 dark:bg-gray-800 rounded-xl items-center"
-                  onPress={() => setSelectedService(null)}
-                >
-                  <Text className={textColor}>Close</Text>
-                </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#ffffff', marginBottom: 4 }}>
+                  Welcome back, {userData.name.split(' ')[0]}!
+                </Text>
+                <Text style={{ fontSize: 16, color: 'rgba(255,255,255,0.9)' }}>
+                  Here's your donation overview
+                </Text>
+                <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.7)', marginTop: 4 }}>
+                  Tap to view profile →
+                </Text>
               </View>
             </TouchableOpacity>
+          </LinearGradient>
+
+          {/* Summary Statistics */}
+          <View style={{ marginBottom: 28 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <Text style={{ fontSize: 20, fontWeight: 'bold', color: currentColors.textPrimary }}>
+                📊 Summary Statistics
+              </Text>
+              <TouchableOpacity
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: theme === 'dark' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.1)',
+                  paddingHorizontal: 16,
+                  paddingVertical: 8,
+                  borderRadius: 12,
+                }}
+                onPress={onRefresh}
+              >
+                <Ionicons name="refresh-outline" size={18} color={currentColors.buttonPrimary} />
+                <Text style={{ color: currentColors.buttonPrimary, fontSize: 14, fontWeight: '600', marginLeft: 6 }}>
+                  Refresh
+                </Text>
+              </TouchableOpacity>
+            </View>
+            
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }}>
+              <StatCard
+                title="Total Donations"
+                value={summaryData!.summary.total_donations.toString()}
+                icon="receipt-outline"
+                color={currentColors.buttonPrimary}
+              />
+              
+              <StatCard
+                title="Total Amount"
+                value={formatCurrency(summaryData!.summary.total_amount)}
+                icon="cash-outline"
+                color={currentColors.success}
+              />
+              
+              <StatCard
+                title="Zaka Total"
+                value={formatCurrency(summaryData!.summary.total_zaka)}
+                icon="home-outline"
+                color={currentColors.warning}
+              />
+              
+              <StatCard
+                title="CTF Total"
+                value={formatCurrency(summaryData!.summary.total_ctf)}
+                icon="business-outline"
+                color={currentColors.danger}
+              />
+            </View>
+          </View>
+
+          {/* Type Distribution */}
+          {summaryData!.type_distribution.length > 0 && (
+            <View style={{ marginBottom: 28 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                <Text style={{ fontSize: 20, fontWeight: 'bold', color: currentColors.textPrimary }}>
+                  📈 Donation Types
+                </Text>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center' }}
+                  onPress={() => router.push('/dashboard/reports')}
+                >
+                  <Text style={{ color: currentColors.buttonPrimary, fontSize: 15, fontWeight: '600', marginRight: 6 }}>
+                    View All
+                  </Text>
+                  <Ionicons name="arrow-forward" size={18} color={currentColors.buttonPrimary} />
+                </TouchableOpacity>
+              </View>
+              {summaryData!.type_distribution.map((item, index) => (
+                <TypeDistributionCard key={index} item={item} index={index} />
+              ))}
+            </View>
+          )}
+
+          {/* Top Donors */}
+          {summaryData!.top_donors.length > 0 && (
+            <View style={{ marginBottom: 28 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                <Text style={{ fontSize: 20, fontWeight: 'bold', color: currentColors.textPrimary }}>
+                  🏆 Top Donors
+                </Text>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center' }}
+                  onPress={() => router.push('/dashboard/members')}
+                >
+                  <Text style={{ color: currentColors.buttonPrimary, fontSize: 15, fontWeight: '600', marginRight: 6 }}>
+                    View All
+                  </Text>
+                  <Ionicons name="arrow-forward" size={18} color={currentColors.buttonPrimary} />
+                </TouchableOpacity>
+              </View>
+              {summaryData!.top_donors.map((donor, index) => (
+                <TopDonorCard key={donor.user__id} donor={donor} index={index} />
+              ))}
+            </View>
+          )}
+
+          {/* Monthly Trend */}
+          {summaryData!.monthly_trend.length > 0 && (
+            <View style={{ marginBottom: 28 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                <Text style={{ fontSize: 20, fontWeight: 'bold', color: currentColors.textPrimary }}>
+                  📅 Monthly Trend
+                </Text>
+                <TouchableOpacity
+                  style={{ flexDirection: 'row', alignItems: 'center' }}
+                  onPress={() => router.push('/dashboard/reports')}
+                >
+                  <Text style={{ color: currentColors.buttonPrimary, fontSize: 15, fontWeight: '600', marginRight: 6 }}>
+                    View Report
+                  </Text>
+                  <Ionicons name="arrow-forward" size={18} color={currentColors.buttonPrimary} />
+                </TouchableOpacity>
+              </View>
+              {summaryData!.monthly_trend.map((month, index) => (
+                <MonthlyTrendCard key={index} month={month} index={index} />
+              ))}
+            </View>
+          )}
+
+          {/* Cache Info */}
+          <View style={{ 
+            backgroundColor: currentColors.cardBackground, 
+            borderRadius: 16, 
+            padding: 20, 
+            marginBottom: 24, 
+            alignItems: 'center',
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+              <Ionicons 
+                name={offline ? "cloud-download-outline" : "cloud-done-outline"} 
+                size={28} 
+                color={offline ? currentColors.warning : currentColors.success} 
+              />
+              <Text style={{ 
+                marginLeft: 12, 
+                fontSize: 18, 
+                fontWeight: '600', 
+                color: currentColors.textPrimary 
+              }}>
+                {offline ? 'Viewing Cached Data' : 'Connected to Server'}
+              </Text>
+            </View>
+            {lastUpdated && (
+              <Text style={{ 
+                color: currentColors.textSecondary, 
+                fontSize: 14, 
+                textAlign: 'center',
+                lineHeight: 20,
+              }}>
+                Last sync: {lastUpdated.toLocaleDateString()} at {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </Text>
+            )}
+            <TouchableOpacity
+              style={{
+                marginTop: 16,
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: theme === 'dark' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.1)',
+                paddingHorizontal: 16,
+                paddingVertical: 10,
+                borderRadius: 12,
+              }}
+              onPress={onRefresh}
+            >
+              <Ionicons name="sync-outline" size={18} color={currentColors.buttonPrimary} />
+              <Text style={{ color: currentColors.buttonPrimary, fontSize: 14, fontWeight: '600', marginLeft: 8 }}>
+                Refresh Data
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </ScrollView>
+
+      {/* Bottom Navigation */}
+      <View style={{ 
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: currentColors.cardBackground,
+        borderTopWidth: 1,
+        borderTopColor: currentColors.cardBorder,
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+      }}>
+        <View style={{ flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center' }}>
+          <TouchableOpacity 
+            style={{ alignItems: 'center', padding: 8 }}
+            onPress={() => router.push('/')}
+          >
+            <View style={{ 
+              width: 56, 
+              height: 56, 
+              borderRadius: 28, 
+              backgroundColor: theme === 'dark' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(59, 130, 246, 0.1)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 6,
+            }}>
+              <Ionicons name="home" size={28} color={currentColors.buttonPrimary} />
+            </View>
+            <Text style={{ color: currentColors.buttonPrimary, fontSize: 13, fontWeight: '600' }}>
+              Home
+            </Text>
           </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={{ alignItems: 'center', padding: 8 }}
+            onPress={() => router.push('/dashboard/settings')}
+          >
+            <View style={{ 
+              width: 56, 
+              height: 56, 
+              borderRadius: 28, 
+              backgroundColor: theme === 'dark' ? 'rgba(107, 114, 128, 0.2)' : 'rgba(107, 114, 128, 0.1)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 6,
+            }}>
+              <Ionicons name="settings" size={28} color={currentColors.textSecondary} />
+            </View>
+            <Text style={{ color: currentColors.textSecondary, fontSize: 13, fontWeight: '600' }}>
+              Settings
+            </Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={{ alignItems: 'center', padding: 8 }}
+            onPress={handleProfilePress}
+          >
+            <View style={{ 
+              width: 56, 
+              height: 56, 
+              borderRadius: 28, 
+              backgroundColor: theme === 'dark' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(16, 185, 129, 0.1)',
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginBottom: 6,
+            }}>
+              <Ionicons name="person" size={28} color={currentColors.success} />
+            </View>
+            <Text style={{ color: currentColors.success, fontSize: 13, fontWeight: '600' }}>
+              Profile
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Modals */}
+      {showSuccessModal && (
+        <Modal transparent visible={showSuccessModal}>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+            <View style={{ backgroundColor: 'white', padding: 20, borderRadius: 10, alignItems: 'center' }}>
+              <Ionicons name="checkmark-circle" size={50} color="green" />
+              <Text style={{ marginTop: 10, fontSize: 16 }}>{modalMessage}</Text>
+            </View>
+          </View>
         </Modal>
       )}
+
+      {showErrorModal && (
+        <Modal transparent visible={showErrorModal}>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' }}>
+            <View style={{ backgroundColor: 'white', padding: 20, borderRadius: 10, alignItems: 'center' }}>
+              <Ionicons name="alert-circle" size={50} color="red" />
+              <Text style={{ marginTop: 10, fontSize: 16 }}>{modalMessage}</Text>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      <Sidebar />
     </SafeAreaView>
   );
-}
+};
+
+export default DonationSummaryScreen;

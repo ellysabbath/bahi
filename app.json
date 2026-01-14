@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "QuickFix",
-    "slug": "quickfix",
+    "name": "Mhazini",
+    "slug": "mhazini",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/QUICKFIXAUTOMOTIVELOGOWHT.png",
-    "scheme": "quickfix",
+    "icon": "./assets/images/image.png",
+    "scheme": "mhazini",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -14,7 +14,7 @@
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/QUICKFIXAUTOMOTIVELOGOWHT.png"
+        "foregroundImage": "./assets/images/image.png"
       },
       "edgeToEdgeEnabled": true,
       "config": {
@@ -34,7 +34,7 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/QUICKFIXAUTOMOTIVELOGOWHT.png"
+      "favicon": "./assets/images/image.png"
     },
     "plugins": [
       "expo-router",
@@ -52,7 +52,7 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/QUICKFIXAUTOMOTIVELOGOWHT.png",
+          "image": "./assets/images/image.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff",
@@ -84,7 +84,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "2efdab98-ca50-4616-8fec-458922173f0a"
+        "projectId": "98ef3a7c-3ec3-47c6-8258-5388275e10cf"
       }
     },
     "owner": "quickfix-plan"

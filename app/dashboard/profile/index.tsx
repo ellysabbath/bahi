@@ -1,14 +1,12 @@
 // app/dashboard/profile/index.tsx
-import { Feather, FontAwesome5, MaterialIcons } from '@expo/vector-icons';
+import { Feather, FontAwesome5, MaterialIcons, Ionicons, Entypo } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
-  Modal,
   Platform,
-  Pressable,
   ScrollView,
   Switch,
   Text,
@@ -17,14 +15,34 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { UserRole, useUser } from '../../../context/UserContext';
+import { useUser } from '../../../context/UserContext';
 
-const ROLE_OPTIONS = [
-  { value: 'customer', label: 'Customer', icon: 'user', color: '#007AFF' },
-  { value: 'mechanic', label: 'Mechanic', icon: 'tools', color: '#FF9500' },
-  { value: 'garage_owner', label: 'Garage Owner', icon: 'warehouse', color: '#34C759' },
-  { value: 'admin', label: 'Admin', icon: 'shield', color: '#FF3B30' },
-] as const;
+// Format date for display
+const formatDate = (dateString: string | null) => {
+  if (!dateString) return 'Never';
+  const date = new Date(dateString);
+  return date.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+// Format phone number for display
+const formatPhoneNumber = (phone: string | null) => {
+  if (!phone) return 'Not provided';
+  // Display with Tanzanian format
+  const cleaned = phone.replace('255', '0');
+  return cleaned.replace(/(\d{4})(\d{3})(\d{3})/, '$1 $2 $3');
+};
+
+// Format membership number for display
+const formatMembershipNumber = (membership: string | null) => {
+  if (!membership) return 'Not provided';
+  return membership.toUpperCase();
+};
 
 export default function ProfileScreen() {
   const { user, updateUser, logout } = useUser();
@@ -32,26 +50,25 @@ export default function ProfileScreen() {
   const [isEditing, setIsEditing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState({
-    first_name: '',
-    last_name: '',
-    phone: '',
-    city: '',
-    state: '',
-    role: 'customer' as UserRole,
+    fullname: '',
+    mobile_number: '',
+    email: '',
+    membership_number: '',
+    region: '',
+    district: '',
   });
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [showRoleModal, setShowRoleModal] = useState(false);
 
   // Initialize form data when user loads
   useEffect(() => {
     if (user) {
       setFormData({
-        first_name: user.first_name || '',
-        last_name: user.last_name || '',
-        phone: user.phone || '',
-        city: user.city || '',
-        state: user.state || '',
-        role: user.role || 'customer',
+        fullname: user.fullname || '',
+        mobile_number: user.mobile_number || '',
+        email: user.email || '',
+        membership_number: user.membership_number || '',
+        region: user.region || '',
+        district: user.district || '',
       });
     }
   }, [user]);
@@ -60,8 +77,8 @@ export default function ProfileScreen() {
     if (!user) return;
 
     // Validate form
-    if (!formData.first_name.trim() || !formData.last_name.trim()) {
-      Alert.alert('Error', 'Please fill in all required fields');
+    if (!formData.fullname.trim()) {
+      Alert.alert('Error', 'Full name is required');
       return;
     }
 
@@ -86,12 +103,12 @@ export default function ProfileScreen() {
   const handleCancel = () => {
     if (user) {
       setFormData({
-        first_name: user.first_name || '',
-        last_name: user.last_name || '',
-        phone: user.phone || '',
-        city: user.city || '',
-        state: user.state || '',
-        role: user.role || 'customer',
+        fullname: user.fullname || '',
+        mobile_number: user.mobile_number || '',
+        email: user.email || '',
+        membership_number: user.membership_number || '',
+        region: user.region || '',
+        district: user.district || '',
       });
     }
     setIsEditing(false);
@@ -115,48 +132,12 @@ export default function ProfileScreen() {
     );
   };
 
-  const formatPhoneNumber = (phone: string) => {
-    // Format phone number for display
-    return phone.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3');
+  const getStatusColor = (status: boolean) => {
+    return status ? 'text-green-700' : 'text-red-700';
   };
 
-  const getRoleIcon = (role: UserRole) => {
-    switch (role) {
-      case 'mechanic':
-        return 'tools';
-      case 'garage_owner':
-        return 'warehouse';
-      case 'admin':
-        return 'shield';
-      default:
-        return 'user';
-    }
-  };
-
-  const getRoleColor = (role: UserRole) => {
-    const roleOption = ROLE_OPTIONS.find(r => r.value === role);
-    return roleOption?.color || '#007AFF';
-  };
-
-  const getRoleDisplay = (role: UserRole) => {
-    const roleOption = ROLE_OPTIONS.find(r => r.value === role);
-    return roleOption?.label || role;
-  };
-
-  const selectRole = (role: UserRole) => {
-    setFormData(prev => ({ ...prev, role }));
-    setShowRoleModal(false);
-  };
-
-  // Handle role-specific navigation
-  const handleRoleNavigation = () => {
-    if (user?.role === 'mechanic') {
-      router.push('/dashboard/mechanic/tasks' as any);
-    } else if (user?.role === 'garage_owner') {
-      router.push('/dashboard/garage/manage' as any);
-    } else if (user?.role === 'admin') {
-      router.push('/dashboard/admin/panel' as any);
-    }
+  const getStatusText = (status: boolean) => {
+    return status ? 'Yes' : 'No';
   };
 
   if (!user) {
@@ -185,6 +166,7 @@ export default function ProfileScreen() {
           <ScrollView 
             className="flex-1"
             showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 30 }}
           >
             {/* Header */}
             <View className="flex-row items-center justify-between px-5 py-4 bg-white border-b border-gray-200">
@@ -229,183 +211,391 @@ export default function ProfileScreen() {
               </View>
             </View>
 
-            {/* Profile Section */}
-            <View className="bg-white px-5 py-6 mt-px items-center">
-              <View className="flex-row items-center mb-4">
-                <View 
-                  className="w-16 h-16 rounded-full justify-center items-center mr-4"
-                  style={{ backgroundColor: getRoleColor(user.role) }}
-                >
-                  <FontAwesome5 
-                    name={getRoleIcon(user.role)} 
-                    size={20} 
-                    color="white" 
-                  />
+            {/* Profile Header */}
+            <View className="bg-white px-5 py-6 mt-px">
+              <View className="flex-row items-start">
+                <View className="w-16 h-16 rounded-full bg-blue-100 justify-center items-center mr-4">
+                  <FontAwesome5 name="user" size={22} color="#007AFF" />
                 </View>
                 <View className="flex-1">
                   <Text className="text-xl font-bold text-gray-900 mb-1">
-                    {user.first_name} {user.last_name}
+                    {user.fullname}
                   </Text>
-                  <Text className="text-gray-600 text-sm font-medium mb-2">{user.email}</Text>
-                  <View className="flex-row items-center bg-gray-50 px-3 py-1.5 rounded-full self-start">
-                    <FontAwesome5 
-                      name={getRoleIcon(user.role)} 
-                      size={10} 
-                      color={getRoleColor(user.role)} 
-                    />
-                    <Text className="text-xs font-semibold uppercase tracking-wider ml-1.5" style={{ color: getRoleColor(user.role) }}>
-                      {getRoleDisplay(user.role)}
+                  <Text className="text-gray-600 text-sm font-medium mb-3">
+                    {user.email || 'No email provided'}
+                  </Text>
+                  
+                  {/* User ID */}
+                  <View className="flex-row items-center mb-2">
+                    <Feather name="hash" size={12} color="#666" />
+                    <Text className="text-gray-500 text-xs font-medium ml-1">
+                      ID: {user.id}
                     </Text>
+                  </View>
+
+                  {/* Status Badges Row 1 */}
+                  <View className="flex-row flex-wrap gap-2 mb-2">
+                    <View className={`px-3 py-1.5 rounded-full ${user.is_active ? 'bg-green-50' : 'bg-red-50'}`}>
+                      <View className="flex-row items-center">
+                        <Ionicons 
+                          name={user.is_active ? 'checkmark-circle' : 'close-circle'} 
+                          size={12} 
+                          color={user.is_active ? '#34C759' : '#FF3B30'} 
+                        />
+                        <Text className={`text-xs font-semibold ml-1.5 ${user.is_active ? 'text-green-700' : 'text-red-700'}`}>
+                          {user.is_active ? 'Active' : 'Inactive'}
+                        </Text>
+                      </View>
+                    </View>
+                    
+                    <View className={`px-3 py-1.5 rounded-full ${user.is_verified ? 'bg-green-50' : 'bg-amber-50'}`}>
+                      <View className="flex-row items-center">
+                        <Ionicons 
+                          name={user.is_verified ? 'checkmark-circle' : 'close-circle'} 
+                          size={12} 
+                          color={user.is_verified ? '#34C759' : '#FF9500'} 
+                        />
+                        <Text className={`text-xs font-semibold ml-1.5 ${user.is_verified ? 'text-green-700' : 'text-amber-700'}`}>
+                          {user.is_verified ? 'Verified' : 'Not Verified'}
+                        </Text>
+                      </View>
+                    </View>
+                    
+                    {user.is_staff && (
+                      <View className="px-3 py-1.5 rounded-full bg-purple-50">
+                        <View className="flex-row items-center">
+                          <Feather name="shield" size={12} color="#AF52DE" />
+                          <Text className="text-purple-700 text-xs font-semibold ml-1.5">Staff</Text>
+                        </View>
+                      </View>
+                    )}
                   </View>
                 </View>
               </View>
-
-              {user.is_email_verified ? (
-                <View className="flex-row items-center bg-green-50 px-4 py-2 rounded-full">
-                  <Feather name="check-circle" size={14} color="#34C759" />
-                  <Text className="text-green-700 text-sm font-semibold ml-2">Verified Account</Text>
-                </View>
-              ) : (
-                <TouchableOpacity className="flex-row items-center bg-amber-50 px-4 py-2 rounded-full">
-                  <Feather name="alert-circle" size={14} color="#FF9500" />
-                  <Text className="text-amber-700 text-sm font-semibold ml-2">Verify Email</Text>
-                </TouchableOpacity>
-              )}
             </View>
 
-            {/* Personal Information */}
+            {/* Personal Information Section */}
             <View className="bg-white mx-4 mt-4 rounded-xl p-5 shadow-sm">
               <View className="flex-row items-center mb-5">
                 <FontAwesome5 name="user-circle" size={16} color="#666" />
                 <Text className="text-gray-900 text-base font-semibold ml-3">Personal Information</Text>
               </View>
 
-              <View className="flex-row items-center min-h-11">
-                <View className="flex-row items-center flex-1">
-                  <Text className="text-gray-600 text-base font-medium">First Name</Text>
+              {/* Full Name */}
+              <View className="flex-row items-center min-h-11 mb-3">
+                <View className="flex-1">
+                  <Text className="text-gray-600 text-base font-medium">Full Name</Text>
                 </View>
                 {isEditing ? (
                   <TextInput
                     className="flex-1 text-right text-gray-900 text-base font-medium py-2 px-3 border border-gray-300 rounded-lg bg-gray-50"
-                    value={formData.first_name}
-                    onChangeText={(text) => setFormData(prev => ({ ...prev, first_name: text }))}
-                    placeholder="Enter first name"
+                    value={formData.fullname}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, fullname: text }))}
+                    placeholder="Enter full name"
                     autoCapitalize="words"
                   />
                 ) : (
-                  <Text className="text-gray-900 text-base font-medium flex-1 text-right">{user.first_name}</Text>
+                  <Text className="text-gray-900 text-base font-medium flex-1 text-right">
+                    {user.fullname}
+                  </Text>
                 )}
               </View>
 
               <View className="h-px bg-gray-100 my-3" />
 
-              <View className="flex-row items-center min-h-11">
+              {/* Mobile Number */}
+              <View className="flex-row items-center min-h-11 mb-3">
                 <View className="flex-row items-center flex-1">
-                  <Text className="text-gray-600 text-base font-medium">Last Name</Text>
+                  <FontAwesome5 name="phone-alt" size={12} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium">Mobile Number</Text>
                 </View>
                 {isEditing ? (
                   <TextInput
                     className="flex-1 text-right text-gray-900 text-base font-medium py-2 px-3 border border-gray-300 rounded-lg bg-gray-50"
-                    value={formData.last_name}
-                    onChangeText={(text) => setFormData(prev => ({ ...prev, last_name: text }))}
-                    placeholder="Enter last name"
-                    autoCapitalize="words"
-                  />
-                ) : (
-                  <Text className="text-gray-900 text-base font-medium flex-1 text-right">{user.last_name}</Text>
-                )}
-              </View>
-
-              <View className="h-px bg-gray-100 my-3" />
-
-              <View className="flex-row items-center min-h-11">
-                <View className="flex-row items-center flex-1">
-                  <FontAwesome5 name="phone" size={12} color="#666" className="mr-2" />
-                  <Text className="text-gray-600 text-base font-medium">Phone</Text>
-                </View>
-                {isEditing ? (
-                  <TextInput
-                    className="flex-1 text-right text-gray-900 text-base font-medium py-2 px-3 border border-gray-300 rounded-lg bg-gray-50"
-                    value={formData.phone}
-                    onChangeText={(text) => setFormData(prev => ({ ...prev, phone: text }))}
-                    placeholder="Enter phone number"
+                    value={formData.mobile_number || ''}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, mobile_number: text }))}
+                    placeholder="255XXXXXXXXX"
                     keyboardType="phone-pad"
                   />
                 ) : (
                   <Text className="text-gray-900 text-base font-medium flex-1 text-right">
-                    {user.phone ? formatPhoneNumber(user.phone) : 'Not provided'}
+                    {formatPhoneNumber(user.mobile_number)}
                   </Text>
                 )}
               </View>
 
               <View className="h-px bg-gray-100 my-3" />
 
-              <View className="flex-row items-center min-h-11">
+              {/* Email Address */}
+              <View className="flex-row items-center min-h-11 mb-3">
                 <View className="flex-row items-center flex-1">
-                  <FontAwesome5 name="map-marker-alt" size={12} color="#666" className="mr-2" />
-                  <Text className="text-gray-600 text-base font-medium">Location</Text>
+                  <Feather name="mail" size={12} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium">Email Address</Text>
                 </View>
                 {isEditing ? (
-                  <View className="flex-1 flex-row justify-between">
-                    <TextInput
-                      className="w-[48%] text-gray-900 text-base font-medium py-2 px-3 border border-gray-300 rounded-lg bg-gray-50"
-                      value={formData.city}
-                      onChangeText={(text) => setFormData(prev => ({ ...prev, city: text }))}
-                      placeholder="City"
-                    />
-                    <TextInput
-                      className="w-[48%] text-gray-900 text-base font-medium py-2 px-3 border border-gray-300 rounded-lg bg-gray-50"
-                      value={formData.state}
-                      onChangeText={(text) => setFormData(prev => ({ ...prev, state: text }))}
-                      placeholder="State"
-                    />
-                  </View>
+                  <TextInput
+                    className="flex-1 text-right text-gray-900 text-base font-medium py-2 px-3 border border-gray-300 rounded-lg bg-gray-50"
+                    value={formData.email || ''}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, email: text }))}
+                    placeholder="Enter email"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
                 ) : (
                   <Text className="text-gray-900 text-base font-medium flex-1 text-right">
-                    {user.city || user.state 
-                      ? `${user.city || ''}${user.city && user.state ? ', ' : ''}${user.state || ''}`.trim()
-                      : 'Not provided'
-                    }
+                    {user.email || 'Not provided'}
                   </Text>
                 )}
               </View>
 
               <View className="h-px bg-gray-100 my-3" />
 
+              {/* Membership Number */}
               <View className="flex-row items-center min-h-11">
                 <View className="flex-row items-center flex-1">
-                  <FontAwesome5 name="user-tag" size={12} color="#666" className="mr-2" />
-                  <Text className="text-gray-600 text-base font-medium">Account Role</Text>
+                  <FontAwesome5 name="id-card-alt" size={12} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium">Membership Number</Text>
                 </View>
                 {isEditing ? (
-                  <TouchableOpacity 
-                    className="flex-1"
-                    onPress={() => setShowRoleModal(true)}
-                  >
-                    <View className="flex-row items-center justify-end py-2 px-3 border border-gray-300 rounded-lg bg-gray-50">
-                      <FontAwesome5 
-                        name={getRoleIcon(formData.role)} 
-                        size={12} 
-                        color={getRoleColor(formData.role)} 
-                      />
-                      <Text className="text-base font-semibold mx-2 capitalize" style={{ color: getRoleColor(formData.role) }}>
-                        {getRoleDisplay(formData.role)}
-                      </Text>
-                      <Feather name="chevron-down" size={14} color="#666" />
-                    </View>
-                  </TouchableOpacity>
+                  <TextInput
+                    className="flex-1 text-right text-gray-900 text-base font-medium py-2 px-3 border border-gray-300 rounded-lg bg-gray-50"
+                    value={formData.membership_number || ''}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, membership_number: text }))}
+                    placeholder="Enter membership number"
+                  />
                 ) : (
-                  <View className="flex-row items-center justify-end flex-1">
-                    <FontAwesome5 
-                      name={getRoleIcon(user.role)} 
-                      size={12} 
-                      color={getRoleColor(user.role)} 
-                    />
-                    <Text className="text-base font-semibold ml-2 capitalize" style={{ color: getRoleColor(user.role) }}>
-                      {getRoleDisplay(user.role)}
-                    </Text>
-                  </View>
+                  <Text className="text-gray-900 text-base font-medium flex-1 text-right">
+                    {formatMembershipNumber(user.membership_number)}
+                  </Text>
                 )}
+              </View>
+            </View>
+
+            {/* Location Information */}
+            <View className="bg-white mx-4 mt-4 rounded-xl p-5 shadow-sm">
+              <View className="flex-row items-center mb-5">
+                <FontAwesome5 name="map-marker-alt" size={16} color="#666" />
+                <Text className="text-gray-900 text-base font-semibold ml-3">Location Information</Text>
+              </View>
+
+              {/* Region */}
+              <View className="flex-row items-center min-h-11 mb-3">
+                <View className="flex-row items-center flex-1">
+                  <Entypo name="location" size={12} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium">Region</Text>
+                </View>
+                {isEditing ? (
+                  <TextInput
+                    className="flex-1 text-right text-gray-900 text-base font-medium py-2 px-3 border border-gray-300 rounded-lg bg-gray-50"
+                    value={formData.region || ''}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, region: text }))}
+                    placeholder="Enter region"
+                  />
+                ) : (
+                  <Text className="text-gray-900 text-base font-medium flex-1 text-right">
+                    {user.region || 'Not provided'}
+                  </Text>
+                )}
+              </View>
+
+              <View className="h-px bg-gray-100 my-3" />
+
+              {/* District */}
+              <View className="flex-row items-center min-h-11">
+                <View className="flex-row items-center flex-1">
+                  <Feather name="map-pin" size={12} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium">District</Text>
+                </View>
+                {isEditing ? (
+                  <TextInput
+                    className="flex-1 text-right text-gray-900 text-base font-medium py-2 px-3 border border-gray-300 rounded-lg bg-gray-50"
+                    value={formData.district || ''}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, district: text }))}
+                    placeholder="Enter district"
+                  />
+                ) : (
+                  <Text className="text-gray-900 text-base font-medium flex-1 text-right">
+                    {user.district || 'Not provided'}
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            {/* Account Status Section */}
+            <View className="bg-white mx-4 mt-4 rounded-xl p-5 shadow-sm">
+              <View className="flex-row items-center mb-5">
+                <Feather name="shield" size={16} color="#666" />
+                <Text className="text-gray-900 text-base font-semibold ml-3">Account Status</Text>
+              </View>
+
+              {/* Account Active */}
+              <View className="flex-row items-center justify-between min-h-11 mb-3">
+                <View className="flex-row items-center flex-1">
+                  <Ionicons name="power" size={14} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium">Account Active</Text>
+                </View>
+                <View className="flex-row items-center">
+                  <Ionicons 
+                    name={user.is_active ? 'checkmark-circle' : 'close-circle'} 
+                    size={16} 
+                    color={user.is_active ? '#34C759' : '#FF3B30'} 
+                  />
+                  <Text className={`text-base font-semibold ml-2 ${getStatusColor(user.is_active)}`}>
+                    {getStatusText(user.is_active)}
+                  </Text>
+                </View>
+              </View>
+
+              <View className="h-px bg-gray-100 my-3" />
+
+              {/* Account Verified */}
+              <View className="flex-row items-center justify-between min-h-11 mb-3">
+                <View className="flex-row items-center flex-1">
+                  <Ionicons name="checkmark-circle" size={14} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium">Account Verified</Text>
+                </View>
+                <View className="flex-row items-center">
+                  <Ionicons 
+                    name={user.is_verified ? 'checkmark-circle' : 'close-circle'} 
+                    size={16} 
+                    color={user.is_verified ? '#34C759' : '#FF9500'} 
+                  />
+                  <Text className={`text-base font-semibold ml-2 ${getStatusColor(user.is_verified)}`}>
+                    {getStatusText(user.is_verified)}
+                  </Text>
+                </View>
+              </View>
+
+              <View className="h-px bg-gray-100 my-3" />
+
+              {/* Staff Status */}
+              <View className="flex-row items-center justify-between min-h-11">
+                <View className="flex-row items-center flex-1">
+                  <Feather name="users" size={14} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium">Staff Member</Text>
+                </View>
+                <View className="flex-row items-center">
+                  <Feather 
+                    name={user.is_staff ? 'user-check' : 'user-x'} 
+                    size={16} 
+                    color={user.is_staff ? '#AF52DE' : '#666'} 
+                  />
+                  <Text className={`text-base font-semibold ml-2 ${getStatusColor(user.is_staff)}`}>
+                    {getStatusText(user.is_staff)}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Account Timestamps */}
+            <View className="bg-white mx-4 mt-4 rounded-xl p-5 shadow-sm">
+              <View className="flex-row items-center mb-5">
+                <Feather name="clock" size={16} color="#666" />
+                <Text className="text-gray-900 text-base font-semibold ml-3">Account Timestamps</Text>
+              </View>
+
+              {/* Date Joined */}
+              <View className="flex-row items-center min-h-11 mb-3">
+                <View className="flex-row items-center flex-1">
+                  <Feather name="calendar" size={14} color="#666" className="mr-2" />
+                  <View>
+                    <Text className="text-gray-600 text-base font-medium">Date Joined</Text>
+                    <Text className="text-gray-400 text-xs">When account was created</Text>
+                  </View>
+                </View>
+                <Text className="text-gray-900 text-base font-medium flex-1 text-right">
+                  {formatDate(user.date_joined)}
+                </Text>
+              </View>
+
+              <View className="h-px bg-gray-100 my-3" />
+
+              {/* Last Login */}
+              <View className="flex-row items-center min-h-11 mb-3">
+                <View className="flex-row items-center flex-1">
+                  <Feather name="log-in" size={14} color="#666" className="mr-2" />
+                  <View>
+                    <Text className="text-gray-600 text-base font-medium">Last Login</Text>
+                    <Text className="text-gray-400 text-xs">Most recent login time</Text>
+                  </View>
+                </View>
+                <Text className="text-gray-900 text-base font-medium flex-1 text-right">
+                  {formatDate(user.last_login)}
+                </Text>
+              </View>
+
+              <View className="h-px bg-gray-100 my-3" />
+
+              {/* Last Updated */}
+              <View className="flex-row items-center min-h-11">
+                <View className="flex-row items-center flex-1">
+                  <Feather name="refresh-cw" size={14} color="#666" className="mr-2" />
+                  <View>
+                    <Text className="text-gray-600 text-base font-medium">Last Updated</Text>
+                    <Text className="text-gray-400 text-xs">Profile last updated</Text>
+                  </View>
+                </View>
+                <Text className="text-gray-900 text-base font-medium flex-1 text-right">
+                  {formatDate(user.updated_at)}
+                </Text>
+              </View>
+            </View>
+
+            {/* Account Summary */}
+            <View className="bg-white mx-4 mt-4 rounded-xl p-5 shadow-sm">
+              <View className="flex-row items-center mb-5">
+                <Feather name="info" size={16} color="#666" />
+                <Text className="text-gray-900 text-base font-semibold ml-3">Account Summary</Text>
+              </View>
+
+              <View className="space-y-3">
+                {/* User ID */}
+                <View className="flex-row items-center">
+                  <Feather name="hash" size={14} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium flex-1">User ID:</Text>
+                  <Text className="text-gray-900 text-base font-medium">{user.id}</Text>
+                </View>
+
+                {/* Account Age */}
+                <View className="flex-row items-center">
+                  <Feather name="clock" size={14} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium flex-1">Account Age:</Text>
+                  <Text className="text-gray-900 text-base font-medium">
+                    {(() => {
+                      const joined = new Date(user.date_joined);
+                      const now = new Date();
+                      const diffTime = Math.abs(now.getTime() - joined.getTime());
+                      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                      return `${diffDays} day${diffDays !== 1 ? 's' : ''}`;
+                    })()}
+                  </Text>
+                </View>
+
+                {/* Contact Info Status */}
+                <View className="flex-row items-center">
+                  <Feather name="phone" size={14} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium flex-1">Mobile Number:</Text>
+                  <Text className={`text-base font-medium ${user.mobile_number ? 'text-green-700' : 'text-amber-700'}`}>
+                    {user.mobile_number ? 'Provided' : 'Not Provided'}
+                  </Text>
+                </View>
+
+                <View className="flex-row items-center">
+                  <Feather name="mail" size={14} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium flex-1">Email:</Text>
+                  <Text className={`text-base font-medium ${user.email ? 'text-green-700' : 'text-amber-700'}`}>
+                    {user.email ? 'Provided' : 'Not Provided'}
+                  </Text>
+                </View>
+
+                {/* Location Info Status */}
+                <View className="flex-row items-center">
+                  <Feather name="map-pin" size={14} color="#666" className="mr-2" />
+                  <Text className="text-gray-600 text-base font-medium flex-1">Location:</Text>
+                  <Text className={`text-base font-medium ${user.region || user.district ? 'text-green-700' : 'text-amber-700'}`}>
+                    {user.region || user.district ? 'Provided' : 'Not Provided'}
+                  </Text>
+                </View>
               </View>
             </View>
 
@@ -416,10 +606,10 @@ export default function ProfileScreen() {
                 <Text className="text-gray-900 text-base font-semibold ml-3">Account Settings</Text>
               </View>
 
-              <View className="flex-row items-center justify-between min-h-11">
+              <View className="flex-row items-center justify-between min-h-11 mb-4">
                 <View className="flex-1">
                   <Text className="text-gray-900 text-base font-medium mb-1">Email Notifications</Text>
-                  <Text className="text-gray-500 text-sm">Receive updates about your bookings</Text>
+                  <Text className="text-gray-500 text-sm">Receive updates about your account</Text>
                 </View>
                 <Switch
                   value={notificationsEnabled}
@@ -429,91 +619,19 @@ export default function ProfileScreen() {
                 />
               </View>
 
-              <View className="h-px bg-gray-100 my-3" />
-
               <View className="flex-row items-center justify-between min-h-11">
                 <View className="flex-1">
-                  <Text className="text-gray-900 text-base font-medium mb-1">Account Status</Text>
-                  <Text className="text-gray-500 text-sm">Registration progress</Text>
+                  <Text className="text-gray-900 text-base font-medium mb-1">Push Notifications</Text>
+                  <Text className="text-gray-500 text-sm">Receive app notifications</Text>
                 </View>
-                <View className={`px-3 py-1.5 rounded-full ${user.registration_stage === 4 ? 'bg-green-50' : 'bg-amber-50'}`}>
-                  <Text className={`text-sm font-semibold ${user.registration_stage === 4 ? 'text-green-700' : 'text-amber-700'}`}>
-                    {user.registration_stage === 4 ? 'Complete' : `Stage ${user.registration_stage}`}
-                  </Text>
-                </View>
-              </View>
-
-              <View className="h-px bg-gray-100 my-3" />
-
-              <View className="flex-row items-center justify-between min-h-11">
-                <View className="flex-1">
-                  <Text className="text-gray-900 text-base font-medium mb-1">Account Type</Text>
-                  <Text className="text-gray-500 text-sm">
-                    {user.role === 'customer' ? 'Personal customer account' : 
-                     user.role === 'mechanic' ? 'Professional mechanic account' :
-                     user.role === 'garage_owner' ? 'Business garage owner account' :
-                     'Administrator account'}
-                  </Text>
-                </View>
-                <View 
-                  className="w-7 h-7 rounded-full justify-center items-center"
-                  style={{ backgroundColor: `${getRoleColor(user.role)}20` }}
-                >
-                  <FontAwesome5 
-                    name={getRoleIcon(user.role)} 
-                    size={10} 
-                    color={getRoleColor(user.role)} 
-                  />
-                </View>
+                <Switch
+                  value={notificationsEnabled}
+                  onValueChange={setNotificationsEnabled}
+                  trackColor={{ false: '#E5E5EA', true: '#007AFF' }}
+                  thumbColor="#FFFFFF"
+                />
               </View>
             </View>
-
-            {/* Role-specific Actions */}
-            {user.role !== 'customer' && (
-              <View className="bg-white mx-4 mt-4 rounded-xl p-5 shadow-sm">
-                <View className="flex-row items-center mb-5">
-                  <FontAwesome5 
-                    name={user.role === 'mechanic' ? 'tools' : user.role === 'garage_owner' ? 'warehouse' : 'shield'}
-                    size={16} 
-                    color={getRoleColor(user.role)} 
-                  />
-                  <Text className="text-base font-semibold ml-3" style={{ color: getRoleColor(user.role) }}>
-                    {getRoleDisplay(user.role)} Tools
-                  </Text>
-                </View>
-                
-                <TouchableOpacity 
-                  className="bg-gray-50 rounded-xl overflow-hidden"
-                  onPress={handleRoleNavigation}
-                >
-                  <View className="flex-row items-center p-4">
-                    <View 
-                      className="w-10 h-10 rounded-full justify-center items-center mr-3"
-                      style={{ backgroundColor: `${getRoleColor(user.role)}20` }}
-                    >
-                      <FontAwesome5 
-                        name={user.role === 'mechanic' ? 'wrench' : user.role === 'garage_owner' ? 'cogs' : 'chart-line'}
-                        size={14} 
-                        color={getRoleColor(user.role)} 
-                      />
-                    </View>
-                    <View className="flex-1">
-                      <Text className="text-gray-900 text-base font-semibold mb-1">
-                        {user.role === 'mechanic' ? 'View My Tasks' : 
-                         user.role === 'garage_owner' ? 'Manage Garage' : 
-                         'Admin Dashboard'}
-                      </Text>
-                      <Text className="text-gray-500 text-sm leading-tight">
-                        {user.role === 'mechanic' ? 'Check assigned repairs and jobs' : 
-                         user.role === 'garage_owner' ? 'Manage your garage and staff' : 
-                         'View system analytics and manage users'}
-                      </Text>
-                    </View>
-                    <Feather name="chevron-right" size={18} color="#666" />
-                  </View>
-                </TouchableOpacity>
-              </View>
-            )}
 
             {/* Action Buttons */}
             <View className="mx-4 mt-6 mb-4">
@@ -526,11 +644,19 @@ export default function ProfileScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity 
-                className="flex-row items-center bg-white px-5 py-4 rounded-xl mb-3 shadow-sm border-l-4 border-gray-500"
+                className="flex-row items-center bg-white px-5 py-4 rounded-xl mb-3 shadow-sm border-l-4 border-green-500"
                 onPress={() => router.push('/dashboard/settings' as any)}
               >
-                <Feather name="shield" size={18} color="#666" />
-                <Text className="text-gray-600 text-base font-semibold ml-3 flex-1">Privacy & Security</Text>
+                <Feather name="shield" size={18} color="#34C759" />
+                <Text className="text-green-600 text-base font-semibold ml-3 flex-1">Privacy & Security</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                className="flex-row items-center bg-white px-5 py-4 rounded-xl mb-3 shadow-sm border-l-4 border-amber-500"
+                onPress={() => router.push('/dashboard/account' as any)}
+              >
+                <Feather name="credit-card" size={18} color="#FF9500" />
+                <Text className="text-amber-600 text-base font-semibold ml-3 flex-1">Billing & Subscription</Text>
               </TouchableOpacity>
 
               <TouchableOpacity 
@@ -542,67 +668,17 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* App Version */}
+            {/* App Info */}
             <View className="items-center py-6">
-              <Text className="text-gray-400 text-sm font-medium">AutoFix v1.0.0</Text>
+              <Text className="text-gray-400 text-sm font-medium">mhaziniApi v1.0.0</Text>
+              <Text className="text-gray-400 text-xs mt-1">User ID: {user.id}</Text>
+              <Text className="text-gray-400 text-xs mt-1">
+                Profile loaded: {new Date().toLocaleTimeString()}
+              </Text>
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
-
-      {/* Role Selection Modal */}
-      <Modal
-        visible={showRoleModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowRoleModal(false)}
-      >
-        <Pressable className="flex-1 bg-black/50 justify-end" onPress={() => setShowRoleModal(false)}>
-          <View className="bg-white rounded-t-2xl p-5 max-h-[80%]">
-            <View className="flex-row justify-between items-center mb-5">
-              <Text className="text-xl font-bold text-gray-900">Select Account Role</Text>
-              <TouchableOpacity onPress={() => setShowRoleModal(false)}>
-                <Feather name="x" size={22} color="#666" />
-              </TouchableOpacity>
-            </View>
-            
-            {ROLE_OPTIONS.map((role) => (
-              <TouchableOpacity
-                key={role.value}
-                className={`flex-row items-center p-4 rounded-xl mb-2 border ${formData.role === role.value ? 'bg-gray-50 border-blue-500' : 'border-gray-200'}`}
-                onPress={() => selectRole(role.value as UserRole)}
-              >
-                <View 
-                  className="w-10 h-10 rounded-full justify-center items-center mr-3"
-                  style={{ backgroundColor: `${role.color}20` }}
-                >
-                  <FontAwesome5 name={role.icon} size={16} color={role.color} />
-                </View>
-                <View className="flex-1">
-                  <Text className="text-base font-semibold mb-1" style={{ color: role.color }}>
-                    {role.label}
-                  </Text>
-                  <Text className="text-gray-500 text-sm leading-tight">
-                    {role.value === 'customer' ? 'Personal customer account for booking services' :
-                     role.value === 'mechanic' ? 'Professional mechanic for performing repairs' :
-                     role.value === 'garage_owner' ? 'Business owner managing a garage' :
-                     'System administrator with full access'}
-                  </Text>
-                </View>
-                {formData.role === role.value && (
-                  <Feather name="check-circle" size={18} color={role.color} />
-                )}
-              </TouchableOpacity>
-            ))}
-            
-            <View className="mt-5 p-3 bg-amber-50 rounded-lg">
-              <Text className="text-amber-700 text-sm italic leading-tight">
-                Note: Changing your role may affect access to certain features. Admin approval may be required for professional roles.
-              </Text>
-            </View>
-          </View>
-        </Pressable>
-      </Modal>
     </>
   );
 }

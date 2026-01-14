@@ -30,6 +30,22 @@ interface SettingItem {
   action?: () => void;
 }
 
+// Format date for display
+const formatDate = (dateString: string | null) => {
+  if (!dateString) return 'Unknown';
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffTime = Math.abs(now.getTime() - date.getTime());
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)} months ago`;
+  return `${Math.floor(diffDays / 365)} years ago`;
+};
+
 export default function SettingsScreen() {
   const [settings, setSettings] = useState<SettingItem[]>([
     {
@@ -84,7 +100,7 @@ export default function SettingsScreen() {
   
   const { theme, toggleTheme } = useTheme();
   const router = useRouter();
-  const { user } = useUser();
+  const { user, logout } = useUser();
 
   const accountSettings = [
     {
@@ -101,7 +117,7 @@ export default function SettingsScreen() {
       description: 'Manage cards and payment options',
       icon: 'credit-card',
       type: 'button',
-      action: () => router.push('/dashboard/settings'),
+      action: () => router.push('/dashboard/payments'),
     },
     {
       id: 9,
@@ -109,7 +125,7 @@ export default function SettingsScreen() {
       description: 'Saved service locations',
       icon: 'map-marker',
       type: 'button',
-      action: () => router.push('/dashboard/settings'),
+      action: () => router.push('/dashboard/addresses'),
     },
   ];
 
@@ -120,7 +136,7 @@ export default function SettingsScreen() {
       description: 'How we protect your data',
       icon: 'shield-check',
       type: 'button',
-      action: () => Linking.openURL('https://quickfixauto.com/privacy'),
+      action: () => Linking.openURL('https://autofix.com/privacy'),
     },
     {
       id: 11,
@@ -128,7 +144,7 @@ export default function SettingsScreen() {
       description: 'App usage terms',
       icon: 'file-document',
       type: 'button',
-      action: () => Linking.openURL('https://quickfixauto.com/terms'),
+      action: () => Linking.openURL('https://autofix.com/terms'),
     },
     {
       id: 12,
@@ -136,7 +152,7 @@ export default function SettingsScreen() {
       description: 'Share your experience',
       icon: 'star',
       type: 'button',
-      action: () => Linking.openURL('https://play.google.com/store/apps/details?id=com.quickfixauto'),
+      action: () => Linking.openURL('https://play.google.com/store/apps/details?id=com.autofix'),
     },
     {
       id: 13,
@@ -157,6 +173,14 @@ export default function SettingsScreen() {
         ]);
       },
     },
+    {
+      id: 14,
+      title: 'Help Center',
+      description: 'Get help and support',
+      icon: 'help-circle',
+      type: 'button',
+      action: () => router.push('/dashboard/help'),
+    },
   ];
 
   const bgColor = theme === 'dark' ? 'bg-gray-900' : 'bg-gray-50';
@@ -165,22 +189,31 @@ export default function SettingsScreen() {
   const textSecondaryColor = theme === 'dark' ? 'text-gray-400' : 'text-gray-600';
 
   const getUserInitials = () => {
-    if (!user) return 'GU';
-    const firstInitial = user.first_name?.[0]?.toUpperCase() || '';
-    const lastInitial = user.last_name?.[0]?.toUpperCase() || '';
-    return firstInitial + lastInitial || 'GU';
+    if (!user || !user.fullname) return 'GU';
+    
+    const nameParts = user.fullname.trim().split(' ');
+    if (nameParts.length === 0) return 'GU';
+    
+    const firstInitial = nameParts[0][0]?.toUpperCase() || '';
+    const lastInitial = nameParts.length > 1 ? nameParts[nameParts.length - 1][0]?.toUpperCase() : '';
+    
+    return (firstInitial + lastInitial) || 'GU';
   };
 
   const getFullName = () => {
-    if (!user) return 'Guest User';
-    const firstName = user.first_name || '';
-    const lastName = user.last_name || '';
-    return `${firstName} ${lastName}`.trim() || 'Guest User';
+    if (!user || !user.fullname) return 'Guest User';
+    return user.fullname.trim() || 'Guest User';
   };
 
   const getUserEmail = () => {
     if (!user) return 'guest@example.com';
-    return user.email || 'guest@example.com';
+    return user.email || 'No email provided';
+  };
+
+  const getMemberSince = () => {
+    if (!user || !user.date_joined) return 'Member since: Unknown';
+    const joinedDate = new Date(user.date_joined);
+    return `Member since: ${joinedDate.getFullYear()}`;
   };
 
   const toggleSetting = (id: number) => {
@@ -203,6 +236,24 @@ export default function SettingsScreen() {
     return <MaterialCommunityIcons name={iconName as any} size={24} color={iconColor} />;
   };
 
+  const handleLogout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Logout', 
+          style: 'destructive', 
+          onPress: async () => {
+            await logout();
+            router.replace('/login');
+          }
+        },
+      ]
+    );
+  };
+
   return (
     <SafeAreaView className={`flex-1 ${bgColor}`}>
       <StatusBar barStyle={theme === 'dark' ? 'light-content' : 'dark-content'} />
@@ -214,8 +265,11 @@ export default function SettingsScreen() {
             <Text className={`text-3xl font-bold ${textColor}`}>Settings</Text>
             <Text className={`text-lg ${textSecondaryColor}`}>Customize your experience</Text>
           </View>
-          <TouchableOpacity className={`p-3 rounded-xl ${cardColor} shadow-lg`}>
-            <Ionicons name="settings" size={28} color="#3b82f6" />
+          <TouchableOpacity 
+            className={`p-3 rounded-xl ${cardColor} shadow-lg`}
+            onPress={() => router.push('/dashboard/profile')}
+          >
+            <Ionicons name="person-circle" size={28} color="#3b82f6" />
           </TouchableOpacity>
         </View>
       </View>
@@ -224,15 +278,54 @@ export default function SettingsScreen() {
       <View className={`mx-5 mb-6 ${cardColor} rounded-2xl p-5 shadow-xl`}>
         <View className="flex-row items-center">
           <View className="w-16 h-16 rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 items-center justify-center mr-4">
-            <Text className="text-green-600 text-2xl font-bold">{getUserInitials()}</Text>
+            <Text className="text-green-900 text-2xl font-bold">{getUserInitials()}</Text>
           </View>
           <View className="flex-1">
             <Text className={`text-xl font-bold ${textColor}`}>{getFullName()}</Text>
             <Text className={textSecondaryColor}>{getUserEmail()}</Text>
-            <Text className={`text-sm ${textSecondaryColor}`}>Member since 2023</Text>
+            <Text className={`text-sm ${textSecondaryColor}`}>{getMemberSince()}</Text>
+            
+            {/* Account Status Badges */}
+            <View className="flex-row flex-wrap gap-2 mt-2">
+              {user?.is_verified && (
+                <View className="px-2 py-1 bg-green-100 dark:bg-green-900/30 rounded-full">
+                  <View className="flex-row items-center">
+                    <Ionicons name="checkmark-circle" size={10} color="#34C759" />
+                    <Text className="text-green-700 dark:text-green-400 text-xs font-semibold ml-1">
+                      Verified
+                    </Text>
+                  </View>
+                </View>
+              )}
+              
+              {user?.is_staff && (
+                <View className="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 rounded-full">
+                  <View className="flex-row items-center">
+                    <Ionicons name="shield" size={10} color="#AF52DE" />
+                    <Text className="text-purple-700 dark:text-purple-400 text-xs font-semibold ml-1">
+                      Staff
+                    </Text>
+                  </View>
+                </View>
+              )}
+              
+              {user?.mobile_number && (
+                <View className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 rounded-full">
+                  <View className="flex-row items-center">
+                    <Ionicons name="phone-portrait" size={10} color="#007AFF" />
+                    <Text className="text-blue-700 dark:text-blue-400 text-xs font-semibold ml-1">
+                      Mobile Verified
+                    </Text>
+                  </View>
+                </View>
+              )}
+            </View>
           </View>
-          <TouchableOpacity className="bg-gradient-to-r from-blue-500 to-indigo-500 px-4 py-2 rounded-full">
-            <Text className="text-green-600 font-semibold">PRO</Text>
+          <TouchableOpacity 
+            className="bg-gradient-to-r from-blue-500 to-indigo-500 px-4 py-2 rounded-full"
+            onPress={() => router.push('/dashboard/profile')}
+          >
+            <Text className="text-white font-semibold">View Profile</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -276,7 +369,7 @@ export default function SettingsScreen() {
         {/* Account Settings */}
         <View className={`${cardColor} rounded-2xl p-1 mb-6 shadow-lg`}>
           <View className="p-4 border-b border-gray-200 dark:border-gray-700">
-            <Text className={`text-lg font-bold ${textColor}`}>Account</Text>
+            <Text className={`text-lg font-bold ${textColor}`}>Account Settings</Text>
             <Text className={`text-sm ${textSecondaryColor}`}>Manage your account</Text>
           </View>
           
@@ -317,6 +410,8 @@ export default function SettingsScreen() {
                 <View className={`w-10 h-10 rounded-xl ${
                   setting.id === 13 
                     ? 'bg-red-100 dark:bg-red-900/30' 
+                    : setting.id === 14
+                    ? 'bg-amber-100 dark:bg-amber-900/30'
                     : 'bg-purple-100 dark:bg-purple-900/30'
                 } items-center justify-center mr-3`}>
                   {renderIcon(setting.icon)}
@@ -331,13 +426,65 @@ export default function SettingsScreen() {
           ))}
         </View>
 
+        {/* Account Information */}
+        <View className={`${cardColor} rounded-2xl p-5 mb-6 shadow-lg`}>
+          <View className="items-center mb-4">
+            <View className="w-20 h-20 rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-500 items-center justify-center mb-3">
+              <Ionicons name="information-circle" size={36} color="white" />
+            </View>
+            <Text className={`text-2xl font-bold ${textColor}`}>Account Information</Text>
+            <Text className={textSecondaryColor}>Your account details</Text>
+          </View>
+          
+          <View className="space-y-3">
+            {user?.id && (
+              <View className="flex-row justify-between">
+                <Text className={textSecondaryColor}>User ID</Text>
+                <Text className={textColor} style={{ fontFamily: 'monospace' }}>
+                  {user.id.substring(0, 8)}...
+                </Text>
+              </View>
+            )}
+            
+            {user?.mobile_number && (
+              <View className="flex-row justify-between">
+                <Text className={textSecondaryColor}>Mobile Number</Text>
+                <Text className={textColor}>{user.mobile_number}</Text>
+              </View>
+            )}
+            
+            {user?.membership_number && (
+              <View className="flex-row justify-between">
+                <Text className={textSecondaryColor}>Membership Number</Text>
+                <Text className={textColor} style={{ fontFamily: 'monospace' }}>
+                  {user.membership_number}
+                </Text>
+              </View>
+            )}
+            
+            {user?.region && user?.district && (
+              <View className="flex-row justify-between">
+                <Text className={textSecondaryColor}>Location</Text>
+                <Text className={textColor}>{user.region}, {user.district}</Text>
+              </View>
+            )}
+            
+            {user?.last_login && (
+              <View className="flex-row justify-between">
+                <Text className={textSecondaryColor}>Last Login</Text>
+                <Text className={textColor}>{formatDate(user.last_login)}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+
         {/* App Info */}
         <View className={`${cardColor} rounded-2xl p-5 mb-6 shadow-lg`}>
           <View className="items-center mb-4">
             <View className="w-20 h-20 rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-500 items-center justify-center mb-3">
               <FontAwesome5 name="tools" size={36} color="white" />
             </View>
-            <Text className={`text-2xl font-bold ${textColor}`}>Quick Fix Auto</Text>
+            <Text className={`text-2xl font-bold ${textColor}`}>MhaziniApi</Text>
             <Text className={textSecondaryColor}>Version 3.2.0</Text>
           </View>
           
@@ -354,21 +501,22 @@ export default function SettingsScreen() {
               <Text className={textSecondaryColor}>Storage Used</Text>
               <Text className={textColor}>147 MB</Text>
             </View>
+            <View className="flex-row justify-between">
+              <Text className={textSecondaryColor}>Account Status</Text>
+              <Text className={`font-medium ${user?.is_active ? 'text-green-600' : 'text-red-600'}`}>
+                {user?.is_active ? 'Active' : 'Inactive'}
+              </Text>
+            </View>
           </View>
         </View>
 
         {/* Logout Button */}
         <TouchableOpacity
           className={`${cardColor} rounded-2xl p-4 mb-10 shadow-lg`}
-          onPress={() => {
-            Alert.alert('Logout', 'Are you sure you want to logout?', [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Logout', style: 'destructive', onPress: () => router.replace('/login') },
-            ]);
-          }}
+          onPress={handleLogout}
         >
           <View className="flex-row items-center justify-center">
-            <Ionicons name="log-out" size={24} color="#ef4444" />
+            <Ionicons name="log-out-outline" size={24} color="#ef4444" />
             <Text className="text-red-500 text-lg font-bold ml-3">Logout</Text>
           </View>
         </TouchableOpacity>

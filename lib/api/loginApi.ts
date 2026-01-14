@@ -5,7 +5,7 @@ import { User } from '../../context/UserContext';
 
 // ==================== INTERFACES ====================
 export interface LoginData {
-  email: string;
+  mobile_number: string;
   password: string;
 }
 
@@ -23,6 +23,15 @@ export interface ApiResponse {
   message?: string;
   error?: string;
   data?: any;
+}
+
+export interface AuthStatusResponse {
+  success: boolean;
+  is_authenticated?: boolean;
+  should_redirect_to_dashboard?: boolean;
+  error?: string;
+  user?: User;
+  access?: string;
 }
 
 // ==================== STORAGE KEYS ====================
@@ -98,7 +107,11 @@ const storage = {
 
   clearAll: async (): Promise<void> => {
     try {
-      await AsyncStorage.multiRemove(Object.values(STORAGE_KEYS));
+      await AsyncStorage.multiRemove([
+        STORAGE_KEYS.ACCESS_TOKEN,
+        STORAGE_KEYS.REFRESH_TOKEN,
+        STORAGE_KEYS.USER_DATA,
+      ]);
       logger.info('All auth data cleared');
     } catch (error) {
       logger.error('Failed to clear auth data:', error);
@@ -113,13 +126,19 @@ const createFetch = async <T>(
   requireAuth: boolean = false
 ): Promise<T> => {
   const url = `${API_CONFIG.BASE_URL}${endpoint}`;
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.TIMEOUT);
+  
+  // Create timeout promise
+  const createTimeoutPromise = (timeout: number): Promise<never> => {
+    return new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`Request timeout after ${timeout}ms`)), timeout);
+    });
+  };
 
   try {
-    // Prepare headers as Record<string, string> to avoid TypeScript errors
+    // Prepare headers
     const headers: Record<string, string> = {
-      ...(API_CONFIG.DEFAULT_HEADERS as Record<string, string>),
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
       ...(options.headers as Record<string, string> || {}),
     };
 
@@ -135,42 +154,32 @@ const createFetch = async <T>(
 
     logger.info(`🌐 ${options.method || 'GET'} ${url}`);
 
-    const response = await fetch(url, {
+    // Create fetch promise
+    const fetchPromise = fetch(url, {
       ...options,
       headers,
-      signal: controller.signal,
-      ...API_CONFIG.FETCH_OPTIONS,
+      method: options.method || 'GET',
     });
 
-    clearTimeout(timeoutId);
-
-    // Handle token expiration
-    if (response.status === 401 && requireAuth) {
-      logger.warn('Token expired, attempting refresh...');
-      const refreshed = await refreshToken();
-      if (refreshed) {
-        // Retry with new token
-        const newToken = await storage.getAccessToken();
-        if (newToken) {
-          headers['Authorization'] = `Bearer ${newToken}`;
-          const retryResponse = await fetch(url, {
-            ...options,
-            headers,
-            signal: controller.signal,
-          });
-          return handleResponse<T>(retryResponse);
-        }
-      }
-      throw new Error('Authentication failed. Please login again.');
-    }
+    // Race between fetch and timeout
+    const response = await Promise.race([
+      fetchPromise,
+      createTimeoutPromise(API_CONFIG.TIMEOUT)
+    ]) as Response;
 
     return handleResponse<T>(response);
   } catch (error: unknown) {
-    clearTimeout(timeoutId);
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Request timeout. Please check your connection.');
+    if (error instanceof Error) {
+      if (error.message.includes('timeout')) {
+        throw new Error('Request timeout. Please check your connection.');
+      }
+      if (error.message.includes('Network request failed')) {
+        throw new Error('Network request failed. Please check your internet connection.');
+      }
     }
-    throw error;
+    
+    logger.error('Network error:', error);
+    throw new Error('Network error occurred');
   }
 };
 
@@ -210,7 +219,7 @@ const refreshToken = async (): Promise<boolean> => {
     logger.info('Refreshing access token...');
     
     const data = await createFetch<{ access: string }>(
-      '/api/auth/token/refresh/',  // Fixed: Remove API_CONFIG.ENDPOINTS reference
+      '/api/auth/token/refresh/',
       {
         method: 'POST',
         body: JSON.stringify({ refresh: refreshTokenValue }),
@@ -231,6 +240,53 @@ const refreshToken = async (): Promise<boolean> => {
   }
 };
 
+// ==================== UTILITY FUNCTIONS ====================
+const normalizeMobileNumber = (mobileNumber: string): string => {
+  if (!mobileNumber || typeof mobileNumber !== 'string') {
+    throw new Error('Mobile number is required');
+  }
+  
+  // Remove any non-digit characters
+  const cleaned = mobileNumber.replace(/\D/g, '');
+  
+  // Validate we have something
+  if (cleaned.length === 0) {
+    throw new Error('Please enter a valid mobile number');
+  }
+  
+  // Convert to Django expected format: 255XXXXXXXXX
+  if (cleaned.startsWith('0') && cleaned.length === 10) {
+    return '255' + cleaned.substring(1);
+  } else if (cleaned.length === 9) {
+    return '255' + cleaned;
+  } else if (cleaned.startsWith('255') && cleaned.length === 12) {
+    return cleaned; // Already in correct format
+  }
+  
+  // If we get here, return as is and let backend validate
+  return cleaned;
+};
+
+// ==================== HELPER TO MAP BACKEND USER TO FRONTEND USER ====================
+const mapBackendUserToFrontendUser = (backendUser: any): User => {
+  // Ensure all fields from CustomUser model are included
+  return {
+    id: String(backendUser.id || 'unknown'),
+    mobile_number: backendUser.mobile_number || null,
+    email: backendUser.email || null,
+    fullname: backendUser.fullname || '',
+    membership_number: backendUser.membership_number || null,
+    is_active: backendUser.is_active !== undefined ? backendUser.is_active : true,
+    is_staff: backendUser.is_staff !== undefined ? backendUser.is_staff : false,
+    is_verified: backendUser.is_verified !== undefined ? backendUser.is_verified : false,
+    region: backendUser.region || null,
+    district: backendUser.district || null,
+    date_joined: backendUser.date_joined || new Date().toISOString(),
+    last_login: backendUser.last_login || null,
+    updated_at: backendUser.updated_at || new Date().toISOString(),
+  };
+};
+
 // ==================== API FUNCTIONS ====================
 export const authApi = {
   // ========== LOGIN ==========
@@ -238,50 +294,63 @@ export const authApi = {
     try {
       logger.info('Attempting login...');
 
+      // Validate credentials
+      if (!credentials.mobile_number || !credentials.password) {
+        throw new Error('Mobile number and password are required');
+      }
+
+      // Normalize mobile number
+      const mobileNumber = normalizeMobileNumber(credentials.mobile_number);
+
+      // Call Django login endpoint
       const data = await createFetch<{
         access: string;
         refresh: string;
         user?: any;
+        message?: string;
       }>(
-        '/api/auth/login/',  // Fixed: Direct endpoint
+        '/api/auth/login/',
         {
           method: 'POST',
           body: JSON.stringify({
-            email: credentials.email.trim().toLowerCase(),
+            mobile_number: mobileNumber,
             password: credentials.password,
           }),
         }
       );
 
+      // Validate response
+      if (!data.access || !data.refresh) {
+        throw new Error('Invalid response from server');
+      }
+
       // Store tokens
       await storage.setTokens(data.access, data.refresh);
 
-      // Process user data
+      // Process user data - include ALL fields from CustomUser model
       let user: User;
       if (data.user) {
-        user = {
-          id: data.user.id || 'unknown',
-          email: data.user.email || credentials.email,
-          first_name: data.user.first_name || '',
-          last_name: data.user.last_name || '',
-          phone: data.user.phone || '',
-          city: data.user.city || '',
-          state: data.user.state || '',
-          role: data.user.role || 'customer',
-          is_email_verified: data.user.is_email_verified || false,
-          registration_stage: data.user.registration_stage || 0,
-          role_display: data.user.role_display || 'Customer',
-          is_admin: data.user.is_admin || false,
-          is_mechanic: data.user.is_mechanic || false,
-          is_garage_owner: data.user.is_garage_owner || false,
-          is_customer: data.user.is_customer || true,
-        };
+        user = mapBackendUserToFrontendUser(data.user);
       } else {
-        // Fetch user profile if not included
-        const userProfile = await authApi.getUserProfile(data.access);
-        user = userProfile;
+        // If user data not included, create minimal user object with all required fields
+        user = {
+          id: 'unknown',
+          mobile_number: mobileNumber,
+          email: null,
+          fullname: 'User',
+          membership_number: null,
+          is_active: true,
+          is_staff: false,
+          is_verified: false,
+          region: null,
+          district: null,
+          date_joined: new Date().toISOString(),
+          last_login: null,
+          updated_at: new Date().toISOString(),
+        };
       }
 
+      // Store user data
       await storage.setUser(user);
 
       return {
@@ -289,7 +358,7 @@ export const authApi = {
         access: data.access,
         refresh: data.refresh,
         user: user,
-        message: 'Login successful',
+        message: data.message || 'Login successful',
       };
     } catch (error: unknown) {
       logger.error('Login failed:', error);
@@ -300,48 +369,165 @@ export const authApi = {
     }
   },
 
+  // ========== CHECK AUTH STATUS ==========
+  checkAuthStatus: async (): Promise<AuthStatusResponse> => {
+    try {
+      // Get all data from storage
+      const [token, refreshTokenValue, storedUser] = await Promise.all([
+        storage.getAccessToken(),
+        storage.getRefreshToken(),
+        storage.getUser(),
+      ]);
+
+      // Check if we have all required data
+      if (!token || !refreshTokenValue || !storedUser) {
+        return {
+          success: false,
+          is_authenticated: false,
+          should_redirect_to_dashboard: false,
+          error: 'No authentication data found',
+        };
+      }
+
+      // Try to validate the token with a simple request
+      try {
+        // Use a simple endpoint to validate token
+        await createFetch(
+          '/api/auth/check-status/',
+          { method: 'GET' },
+          true
+        );
+
+        // Token is valid
+        return {
+          success: true,
+          is_authenticated: true,
+          should_redirect_to_dashboard: true,
+          user: storedUser,
+          access: token,
+        };
+      } catch (error) {
+        logger.warn('Token validation failed:', error);
+        
+        // Try to refresh token
+        const refreshed = await refreshToken();
+        if (refreshed) {
+          const newToken = await storage.getAccessToken();
+          return {
+            success: true,
+            is_authenticated: true,
+            should_redirect_to_dashboard: true,
+            user: storedUser,
+            access: newToken || token,
+          };
+        }
+        
+        // Clear invalid data
+        await storage.clearAll();
+        return {
+          success: false,
+          is_authenticated: false,
+          should_redirect_to_dashboard: false,
+          error: 'Session expired',
+        };
+      }
+    } catch (error: unknown) {
+      logger.error('Auth status check failed:', error);
+      return {
+        success: false,
+        is_authenticated: false,
+        should_redirect_to_dashboard: false,
+        error: error instanceof Error ? error.message : 'Authentication check failed',
+      };
+    }
+  },
+
   // ========== GET USER PROFILE ==========
   getUserProfile: async (token?: string): Promise<User> => {
     try {
       const headers: Record<string, string> = {
-        ...(API_CONFIG.DEFAULT_HEADERS as Record<string, string>),
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
       };
 
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      } else {
-        const storedToken = await storage.getAccessToken();
-        if (storedToken) {
-          headers['Authorization'] = `Bearer ${storedToken}`;
+      // Use provided token or get from storage
+      let authToken = token;
+      if (!authToken) {
+        authToken = await storage.getAccessToken();
+      }
+
+      if (!authToken) {
+        throw new Error('No authentication token available');
+      }
+
+      headers['Authorization'] = `Bearer ${authToken}`;
+
+      // Try different endpoints
+      const endpoints = [
+        '/api/auth/me/',
+        '/api/auth/user/profile/',
+        '/api/users/profile/',
+        '/api/auth/user/',  // Additional endpoint
+      ];
+
+      let lastError: Error | null = null;
+
+      for (const endpoint of endpoints) {
+        try {
+          const response = await fetch(`${API_CONFIG.BASE_URL}${endpoint}`, {
+            method: 'GET',
+            headers,
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const userData = data.user || data;
+            
+            // Map ALL fields from CustomUser model
+            return mapBackendUserToFrontendUser(userData);
+          }
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error('Profile fetch failed');
         }
       }
 
-      const data = await createFetch<any>(
-        '/api/auth/me/',  // Fixed: Direct endpoint
-        { headers },
-        !!headers['Authorization']
-      );
-
-      return {
-        id: data.id || 'unknown',
-        email: data.email || '',
-        first_name: data.first_name || '',
-        last_name: data.last_name || '',
-        phone: data.phone || '',
-        city: data.city || '',
-        state: data.state || '',
-        role: data.role || 'customer',
-        is_email_verified: data.is_email_verified || false,
-        registration_stage: data.registration_stage || 0,
-        role_display: data.role_display || 'Customer',
-        is_admin: data.is_admin || false,
-        is_mechanic: data.is_mechanic || false,
-        is_garage_owner: data.is_garage_owner || false,
-        is_customer: data.is_customer || true,
-      };
+      throw lastError || new Error('Could not fetch user profile');
     } catch (error) {
       logger.error('Failed to fetch user profile:', error);
       throw error;
+    }
+  },
+
+  // ========== UPDATE USER PROFILE ==========
+  updateUserProfile: async (userData: Partial<User>): Promise<{ success: boolean; user?: User; error?: string }> => {
+    try {
+      const response = await createFetch<{ user: any; message?: string }>(
+        '/api/auth/user/profile/',
+        {
+          method: 'PUT',
+          body: JSON.stringify(userData),
+        },
+        true
+      );
+
+      if (response.user) {
+        const updatedUser = mapBackendUserToFrontendUser(response.user);
+        await storage.setUser(updatedUser);
+        
+        return {
+          success: true,
+          user: updatedUser,
+          message: response.message || 'Profile updated successfully',
+        };
+      }
+
+      throw new Error('No user data in response');
+    } catch (error: unknown) {
+      logger.error('Profile update failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Profile update failed',
+      };
     }
   },
 
@@ -349,12 +535,12 @@ export const authApi = {
   logout: async (): Promise<ApiResponse> => {
     try {
       await createFetch(
-        '/api/auth/logout/',  // Fixed: Direct endpoint
+        '/api/auth/logout/',
         { method: 'POST' },
         true
       );
     } catch (error) {
-      // Continue even if logout API call fails
+      // Log but continue
       logger.warn('Logout API call failed:', error);
     }
 
@@ -367,26 +553,22 @@ export const authApi = {
     };
   },
 
-  // ========== CHECK AUTH STATUS ==========
+  // ========== CHECK AUTH (Legacy) ==========
   checkAuth: async (): Promise<LoginResponse> => {
     try {
-      const token = await storage.getAccessToken();
-      const user = await storage.getUser();
-
-      if (!token || !user) {
+      const status = await authApi.checkAuthStatus();
+      
+      if (status.success && status.is_authenticated && status.user) {
         return {
-          success: false,
-          error: 'Not authenticated',
+          success: true,
+          access: status.access || '',
+          user: status.user,
         };
       }
-
-      // Validate token by fetching fresh user data
-      const freshUser = await authApi.getUserProfile(token);
-
+      
       return {
-        success: true,
-        access: token,
-        user: freshUser,
+        success: false,
+        error: status.error || 'Not authenticated',
       };
     } catch (error) {
       logger.error('Auth check failed:', error);
@@ -400,7 +582,7 @@ export const authApi = {
   // ========== TEST CONNECTION ==========
   testConnection: async (): Promise<ApiResponse> => {
     try {
-      await createFetch('/api/test/', { method: 'GET' });  // Fixed: Direct endpoint
+      await createFetch('/api/test/', { method: 'GET' });
       return {
         success: true,
         message: 'Backend connection successful',

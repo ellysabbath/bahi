@@ -1,10 +1,8 @@
 // services/passwordResetApi.ts
 import axios from 'axios';
 
-// Use your computer's IP address or localhost
-const API_BASE_URL = 'https://AutoFix.pythonanywhere.com/'; // Update with your IP
+const API_BASE_URL = 'http://192.168.137.1:8000/api/auth';
 
-// Create axios instance with proper configuration
 const axiosInstance = axios.create({
   baseURL: API_BASE_URL,
   timeout: 15000,
@@ -14,7 +12,7 @@ const axiosInstance = axios.create({
   },
 });
 
-// Add request interceptor for debugging
+// Request interceptor
 axiosInstance.interceptors.request.use(
   (config) => {
     console.log(`🚀 ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
@@ -29,7 +27,7 @@ axiosInstance.interceptors.request.use(
   }
 );
 
-// Add response interceptor for debugging
+// Response interceptor
 axiosInstance.interceptors.response.use(
   (response) => {
     console.log(`✅ ${response.status} from ${response.config.url}`);
@@ -37,31 +35,17 @@ axiosInstance.interceptors.response.use(
     return response;
   },
   (error) => {
-    console.error('❌ Response error:', {
-      message: error.message,
-      status: error.response?.status,
-      data: error.response?.data,
-      url: error.config?.url,
-    });
+    console.error('❌ Response error:', error.response?.data || error.message);
     return Promise.reject(error);
   }
 );
 
-export interface PasswordStrength {
-  hasMinLength: boolean;
-  hasUpperCase: boolean;
-  hasLowerCase: boolean;
-  hasNumber: boolean;
-  hasSpecialChar: boolean;
-}
-
 export interface APIResponse {
-  success: boolean;
+  success?: boolean;
   message: string;
-  reset_token?: string;
-  otp_expires_in?: number;
-  next_step?: string;
-  debug_otp?: string;
+  verified?: boolean;
+  email?: string;
+  email_sent?: boolean;
   error?: string;
 }
 
@@ -76,53 +60,33 @@ class PasswordResetAPI {
   }
 
   /**
-   * Test API connection
-   */
-  async testConnection(): Promise<APIResponse> {
-    try {
-      console.log('🔗 Testing API connection...');
-      const response = await axiosInstance.get('test/');
-      return {
-        success: true,
-        message: 'API is reachable',
-        ...response.data,
-      };
-    } catch (error: any) {
-      console.error('Connection test failed:', error.message);
-      return {
-        success: false,
-        message: `Cannot connect to server: ${error.message}`,
-      };
-    }
-  }
-
-  /**
-   * Request password reset OTP
+   * Request password reset OTP via email
    */
   async requestPasswordReset(email: string): Promise<APIResponse> {
     try {
       console.log('📧 Requesting password reset for:', email);
       
-      const response = await axiosInstance.post(
-        'auth/password-reset/request/',
-        { email }
-      );
+      const response = await axiosInstance.post('/password-reset/request/', {
+        email: email.toLowerCase().trim()
+      });
       
-      return response.data;
+      return {
+        success: true,
+        message: response.data.message || 'OTP sent successfully',
+        email: response.data.email,
+        email_sent: response.data.email_sent,
+        ...response.data,
+      };
     } catch (error: any) {
-      console.error('Password reset request failed:', error.message);
+      console.error('Password reset request failed:', error.response?.data || error.message);
       
-      // Return user-friendly error message
-      if (error.response?.status === 404) {
-        return {
-          success: false,
-          message: 'Password reset endpoint not found. Please check server configuration.',
-        };
-      }
+      const errorMessage = error.response?.data?.error || 
+                         error.response?.data?.email?.[0] || 
+                         error.message;
       
       return {
         success: false,
-        message: error.response?.data?.error || `Failed to send OTP: ${error.message}`,
+        message: errorMessage || 'Failed to send OTP',
       };
     }
   }
@@ -130,22 +94,32 @@ class PasswordResetAPI {
   /**
    * Verify password reset OTP
    */
-  async verifyOTP(resetToken: string, otp: string): Promise<APIResponse> {
+  async verifyOTP(email: string, otp: string): Promise<APIResponse> {
     try {
-      console.log('🔐 Verifying OTP with token:', resetToken.substring(0, 10) + '...');
+      console.log('🔐 Verifying OTP for:', email);
       
-      const response = await axiosInstance.post(
-        'auth/password-reset/verify-otp/',
-        { reset_token: resetToken, otp }
-      );
+      const response = await axiosInstance.post('/password-reset/verify-otp/', {
+        email: email.toLowerCase().trim(),
+        otp
+      });
       
-      return response.data;
+      return {
+        success: true,
+        message: response.data.message || 'OTP verified',
+        verified: response.data.verified,
+        email: response.data.email,
+        ...response.data,
+      };
     } catch (error: any) {
-      console.error('OTP verification failed:', error.message);
+      console.error('OTP verification failed:', error.response?.data || error.message);
+      
+      const errorMessage = error.response?.data?.error || 
+                         error.response?.data?.otp?.[0] || 
+                         error.message;
       
       return {
         success: false,
-        message: error.response?.data?.error || `Failed to verify OTP: ${error.message}`,
+        message: errorMessage || 'Failed to verify OTP',
       };
     }
   }
@@ -153,72 +127,41 @@ class PasswordResetAPI {
   /**
    * Complete password reset
    */
-  async resetPassword(
-    resetToken: string,
-    newPassword: string,
-    confirmPassword: string
-  ): Promise<APIResponse> {
+  async resetPassword(email: string, otp: string, newPassword: string): Promise<APIResponse> {
     try {
       console.log('🔄 Completing password reset...');
       
-      const response = await axiosInstance.post(
-        'auth/password-reset/complete/',
-        {
-          reset_token: resetToken,
-          new_password: newPassword,
-          confirm_password: confirmPassword,
-        }
-      );
+      const response = await axiosInstance.post('/password-reset/confirm/', {
+        email: email.toLowerCase().trim(),
+        otp,
+        new_password: newPassword,
+      });
       
-      return response.data;
+      return {
+        success: true,
+        message: response.data.message || 'Password reset successfully',
+        ...response.data,
+      };
     } catch (error: any) {
-      console.error('Password reset failed:', error.message);
+      console.error('Password reset failed:', error.response?.data || error.message);
+      
+      const errorMessage = error.response?.data?.error || 
+                         error.response?.data?.new_password?.[0] || 
+                         error.message;
       
       return {
         success: false,
-        message: error.response?.data?.error || `Failed to reset password: ${error.message}`,
+        message: errorMessage || 'Failed to reset password',
       };
     }
   }
 
   /**
-   * Validate password strength
+   * Validate email address
    */
-  validatePasswordStrength(password: string): PasswordStrength {
-    return {
-      hasMinLength: password.length >= 8,
-      hasUpperCase: /[A-Z]/.test(password),
-      hasLowerCase: /[a-z]/.test(password),
-      hasNumber: /\d/.test(password),
-      hasSpecialChar: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password),
-    };
-  }
-
-  /**
-   * Calculate password strength score
-   */
-  calculatePasswordStrength(requirements: PasswordStrength): number {
-    return Object.values(requirements).filter(Boolean).length;
-  }
-
-  /**
-   * Get password strength text
-   */
-  getPasswordStrengthText(score: number): string {
-    if (score <= 1) return 'Very Weak';
-    if (score <= 2) return 'Weak';
-    if (score <= 3) return 'Fair';
-    if (score <= 4) return 'Strong';
-    return 'Very Strong';
-  }
-
-  /**
-   * Get password strength color
-   */
-  getPasswordStrengthColor(score: number): string {
-    if (score <= 1) return '#EF4444';
-    if (score <= 3) return '#F59E0B';
-    return '#10B981';
+  isValidEmail(email: string): boolean {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email.toLowerCase().trim());
   }
 
   /**
@@ -227,8 +170,31 @@ class PasswordResetAPI {
   isValidOTP(otp: string): boolean {
     return /^\d{6}$/.test(otp);
   }
+
+  /**
+   * Check if password meets minimum requirements (8+ characters)
+   */
+  isValidPassword(password: string): boolean {
+    return password.length >= 8;
+  }
+
+  /**
+   * Format email for display
+   */
+  formatEmailForDisplay(email: string): string {
+    if (!email) return '';
+    
+    const [localPart, domain] = email.toLowerCase().trim().split('@');
+    if (localPart && domain) {
+      if (localPart.length <= 3) {
+        return `${localPart}@${domain}`;
+      }
+      return `${localPart.substring(0, 3)}***@${domain}`;
+    }
+    
+    return email;
+  }
 }
 
-// Export singleton instance
 export const passwordResetAPI = PasswordResetAPI.getInstance();
 export default passwordResetAPI;

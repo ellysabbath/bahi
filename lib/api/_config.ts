@@ -1,7 +1,9 @@
 // lib/config.ts
 export const API_CONFIG = {
-  // ✅ Environment variable for production, fallback for development
-  BASE_URL: process.env.API_BASE_URL || 'https://AutoFix.pythonanywhere.com',
+  // ✅ For development, use your computer's IP address
+  // On Windows: Run ipconfig to get your IPv4 address
+  // On Mac: Run ifconfig | grep "inet "
+  BASE_URL:'https://mhazini.pythonanywhere.com',
   
   DEFAULT_HEADERS: {
     'Content-Type': 'application/json',
@@ -12,11 +14,10 @@ export const API_CONFIG = {
     credentials: 'omit' as RequestCredentials,
   },
   
-  TIMEOUT: 15000, // Reduced from 30000 for better UX
+  TIMEOUT: 10000, // 10 seconds
   
   // Debug settings
   DEBUG_MODE: __DEV__,
-  LOG_NETWORK: true,
   
   // Endpoints
   ENDPOINTS: {

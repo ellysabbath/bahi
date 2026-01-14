@@ -1,6 +1,6 @@
 // app/login/index.tsx
 import { Link, router, useLocalSearchParams } from "expo-router";
-import { Eye, EyeOff, Lock, Mail } from "lucide-react-native";
+import { Eye, EyeOff, Lock, Phone } from "lucide-react-native";
 import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -20,30 +20,29 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
 import { useUser } from "../../context/UserContext";
-import { authApi, type LoginData, type LoginResponse } from "../../lib/api/loginApi";
-
+// app/login/index.tsx - Change this line
+import authApi, { type LoginData, type LoginResponse } from "../../lib/api/loginApi"; // ✅ Correct
 export default function LoginScreen() {
   const params = useLocalSearchParams();
   const { setUser } = useUser();
   const [loading, setLoading] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [formData, setFormData] = useState({
-    email: (params.email as string) || "",
+    mobile_number: (params.email as string) || "",
     password: "",
   });
   const [errors, setErrors] = useState({
-    email: "",
+    mobile_number: "",
     password: "",
   });
 
   const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
   
-  // Check if screen is small
   const isSmallScreen = screenHeight < 700;
   const isVerySmallScreen = screenHeight < 600;
   
-  // Get responsive scale factor
   const getScaleFactor = () => {
     if (screenHeight < 600) return 0.8;
     if (screenHeight < 700) return 0.9;
@@ -53,14 +52,46 @@ export default function LoginScreen() {
   
   const scaleFactor = getScaleFactor();
 
-  // Refs
-  const emailInputRef = useRef<TextInput>(null);
+  const mobileInputRef = useRef<TextInput>(null);
   const passwordInputRef = useRef<TextInput>(null);
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Fixed useEffect dependencies
+  // Auto-redirect check on component mount
   useEffect(() => {
-    // Show registration success message if redirected from registration
+    const checkAutoRedirect = async () => {
+      try {
+        console.log('🔍 Checking for existing auth session...');
+        
+        const authStatus = await authApi.checkAuthStatus();
+        
+        if (authStatus.success && 
+            authStatus.is_authenticated && 
+            authStatus.should_redirect_to_dashboard &&
+            authStatus.user &&
+            authStatus.access) {
+          
+          console.log('✅ User already authenticated, auto-redirecting to dashboard...');
+          
+          await setUser(authStatus.user, authStatus.access);
+          
+          // Auto-redirect to dashboard
+          setTimeout(() => {
+            router.replace('/dashboard');
+          }, 300);
+        } else {
+          console.log('🔐 No valid session found, showing login screen');
+        }
+      } catch (error) {
+        console.log('⚠️ Auth check error:', error);
+      } finally {
+        setCheckingAuth(false);
+      }
+    };
+
+    checkAutoRedirect();
+  }, []);
+
+  useEffect(() => {
     if (params.registration_complete === 'true') {
       Alert.alert(
         '✅ Registration Complete!',
@@ -69,10 +100,8 @@ export default function LoginScreen() {
       );
     }
 
-    // Keyboard listeners
     const keyboardDidShow = Keyboard.addListener('keyboardDidShow', () => {
       setKeyboardVisible(true);
-      // Scroll to input when keyboard appears
       setTimeout(() => {
         if (passwordInputRef.current?.isFocused()) {
           scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -91,11 +120,26 @@ export default function LoginScreen() {
     };
   }, [params.message, params.registration_complete]);
 
-  const validateEmail = (email: string): string => {
-    if (!email.trim()) return 'Email is required';
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) return 'Please enter a valid email address';
-    return '';
+  const validateMobileNumber = (mobile: string): string => {
+    if (!mobile.trim()) return 'Mobile number is required';
+    
+    // Remove any spaces or special characters
+    const cleaned = mobile.replace(/\D/g, '');
+    
+    // Check if it starts with 0 or 255
+    if (cleaned.startsWith('0') && cleaned.length === 10) {
+      return ''; // Valid Tanzanian number starting with 0
+    }
+    
+    if (cleaned.startsWith('255') && cleaned.length === 12) {
+      return ''; // Valid Tanzanian number with country code
+    }
+    
+    if (cleaned.length === 9) {
+      return ''; // Valid without leading 0
+    }
+    
+    return 'Please enter a valid Tanzanian mobile number (e.g., 0712345678 or 255712345678)';
   };
 
   const validatePassword = (password: string): string => {
@@ -105,25 +149,22 @@ export default function LoginScreen() {
   };
 
   const validateForm = (): boolean => {
-    const emailError = validateEmail(formData.email);
+    const mobileError = validateMobileNumber(formData.mobile_number);
     const passwordError = validatePassword(formData.password);
     
     setErrors({
-      email: emailError,
+      mobile_number: mobileError,
       password: passwordError,
     });
 
-    return !emailError && !passwordError;
+    return !mobileError && !passwordError;
   };
 
-  // JWT Login Handler - USING NEW AUTH API
   const handleLogin = async () => {
     Keyboard.dismiss();
     
-    // Clear previous errors
-    setErrors({ email: '', password: '' });
+    setErrors({ mobile_number: '', password: '' });
     
-    // Validate form
     if (!validateForm()) {
       return;
     }
@@ -131,37 +172,35 @@ export default function LoginScreen() {
     setLoading(true);
     
     try {
+      // Normalize mobile number format for Django
+      let mobileNumber = formData.mobile_number.replace(/\D/g, '');
+      
+      // Convert to Django expected format: 255XXXXXXXXX
+      if (mobileNumber.startsWith('0')) {
+        mobileNumber = '255' + mobileNumber.substring(1);
+      } else if (mobileNumber.length === 9) {
+        mobileNumber = '255' + mobileNumber;
+      }
+      // If it's already 255XXXXXXXXX, leave it as is
+      
+      // FIXED: Use the correct LoginData structure
       const requestData: LoginData = {
-        email: formData.email.trim(),
+        mobile_number: mobileNumber, // Correct field name
         password: formData.password,
       };
       
-      console.log('🔐 Attempting JWT login...');
+      console.log('🔐 Attempting login with mobile:', mobileNumber);
       
       const response: LoginResponse = await authApi.login(requestData);
       console.log('📥 Login Response:', response);
       
       if (response.success && response.access && response.user) {
-        console.log('✅ JWT Login successful!');
-        console.log('🔑 Access Token:', response.access.substring(0, 20) + '...');
+        console.log('✅ Login successful!');
         
-        // Store the JWT token in UserContext
         await setUser(response.user, response.access);
         
-        // Navigate to dashboard based on role - USING CORRECT NESTED LAYOUT PATHS
-        if (response.user.is_admin || response.user.role === 'admin') {
-          // Navigate to admin dashboard
-          router.replace('/dashboard');
-        } else if (response.user.is_mechanic) {
-          // Navigate to mechanic bookings
-          router.replace('/dashboard');
-        } else if (response.user.is_garage_owner) {
-          // Navigate to dashboard services
-          router.replace('/dashboard');
-        } else {
-          // Navigate to dashboard services for regular users
-          router.replace('/dashboard');
-        }
+        // Navigate to dashboard
+        router.replace('/dashboard');
         
         // Clear password field
         setFormData(prev => ({ ...prev, password: '' }));
@@ -169,21 +208,18 @@ export default function LoginScreen() {
       } else {
         console.error('❌ Login failed:', response.error);
         
-        // Update error states
-        if (response.error?.toLowerCase().includes('email') || 
+        if (response.error?.toLowerCase().includes('mobile') || 
             response.error?.toLowerCase().includes('not found')) {
-          setErrors(prev => ({ ...prev, email: response.error! }));
+          setErrors(prev => ({ ...prev, mobile_number: response.error! }));
         } else if (response.error?.toLowerCase().includes('password') || 
-                   response.error?.toLowerCase().includes('invalid') ||
-                   response.error?.toLowerCase().includes('incorrect')) {
+                   response.error?.toLowerCase().includes('invalid')) {
           setErrors(prev => ({ ...prev, password: response.error! }));
         }
         
-        // Show appropriate alert
-        if (response.error?.includes('Email not registered')) {
+        if (response.error?.includes('not registered')) {
           Alert.alert(
             'Account Not Found',
-            'This email is not registered. Would you like to create an account?',
+            'This mobile number is not registered. Would you like to create an account?',
             [
               { text: 'Cancel', style: 'cancel' },
               { 
@@ -192,10 +228,10 @@ export default function LoginScreen() {
               }
             ]
           );
-        } else if (response.error?.includes('Email not verified')) {
+        } else if (response.error?.includes('not verified')) {
           Alert.alert(
-            'Email Not Verified',
-            'Please verify your email before logging in.',
+            'Account Not Verified',
+            'Please verify your account before logging in.',
             [
               { text: 'Cancel', style: 'cancel' },
               { 
@@ -205,14 +241,14 @@ export default function LoginScreen() {
             ]
           );
         } else {
-          Alert.alert('Login Failed', response.error || 'Invalid email or password. Please try again.');
+          Alert.alert('Login Failed', response.error || 'Invalid mobile number or password.');
         }
       }
     } catch (error: any) {
       console.error('❌ Unexpected login error:', error);
       Alert.alert(
         'Connection Error',
-        'Unable to connect to the server. Please check your internet connection.'
+        error.message || 'Unable to connect to the server. Please check your internet connection.'
       );
     } finally {
       setLoading(false);
@@ -220,12 +256,12 @@ export default function LoginScreen() {
   };
 
   const handleResendVerification = async () => {
-    Alert.alert('Info', 'Verification email functionality coming soon.');
+    Alert.alert('Info', 'Verification functionality coming soon.');
   };
 
-  const handleEmailChange = (text: string) => {
-    setFormData({ ...formData, email: text });
-    if (errors.email) setErrors(prev => ({ ...prev, email: '' }));
+  const handleMobileChange = (text: string) => {
+    setFormData({ ...formData, mobile_number: text });
+    if (errors.mobile_number) setErrors(prev => ({ ...prev, mobile_number: '' }));
   };
 
   const handlePasswordChange = (text: string) => {
@@ -237,7 +273,7 @@ export default function LoginScreen() {
     setShowPassword(!showPassword);
   };
 
-  const handleEmailSubmit = () => {
+  const handleMobileSubmit = () => {
     passwordInputRef.current?.focus();
   };
 
@@ -245,8 +281,16 @@ export default function LoginScreen() {
     Keyboard.dismiss();
   };
 
-  // Responsive values based on screen height
-  const getResponsiveSize = (base: number) => Math.round(base * scaleFactor);
+  if (checkingAuth) {
+    return (
+      <SafeAreaView className="flex-1 bg-gray-900 justify-center items-center">
+        <View className="items-center">
+          <ActivityIndicator size="large" color="#3B82F6" />
+          <Text className="text-white mt-4 text-lg">Checking authentication...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-gray-900 pt-safe">
@@ -257,7 +301,6 @@ export default function LoginScreen() {
       >
         <TouchableWithoutFeedback onPress={dismissKeyboard}>
           <View className="flex-1">
-            {/* Animated Background */}
             <View className="absolute inset-0 bg-gray-900" />
             
             <ScrollView
@@ -292,7 +335,7 @@ export default function LoginScreen() {
                     }}
                   >
                     <Image
-                      source={require('../../assets/images/QUICKFIXAUTOMOTIVELOGOWHT.png')}
+                      source={require('../../assets/images/image.png')}
                       className={`
                         ${isVerySmallScreen ? 'w-20 h-20' : 
                           isSmallScreen ? 'w-24 h-24' : 
@@ -319,11 +362,11 @@ export default function LoginScreen() {
                     text-gray-300 text-center
                   `}
                 >
-                  Sign in to access your account
+                  Sign in with your mobile number
                 </Animated.Text>
               </Animated.View>
 
-              {/* Login Card - ENLARGED */}
+              {/* Login Card */}
               <Animated.View
                 entering={FadeInDown.delay(400)}
                 className={`
@@ -336,7 +379,7 @@ export default function LoginScreen() {
                   elevation: 8,
                 }}
               >
-                {/* Email Field - ENLARGED */}
+                {/* Mobile Number Field */}
                 <Animated.View 
                   entering={FadeInDown.delay(500)}
                   className={`
@@ -347,30 +390,30 @@ export default function LoginScreen() {
                     ${isSmallScreen ? 'text-xs' : 'text-sm'}
                     text-gray-300 font-semibold mb-2 ml-1
                   `}>
-                    Email Address
+                    Mobile Number
                   </Text>
                   <View
                     className={`
                       flex-row items-center rounded-xl px-4
                       border-2
-                      ${errors.email ? 'border-red-500 bg-red-500/10' : 'border-gray-600 bg-gray-900/50'}
+                      ${errors.mobile_number ? 'border-red-500 bg-red-500/10' : 'border-gray-600 bg-gray-900/50'}
                       ${isSmallScreen ? 'h-14' : 'h-16'}
                     `}
                   >
-                    <Mail
+                    <Phone
                       size={isSmallScreen ? 18 : 20}
-                      color={errors.email ? "#EF4444" : "#9CA3AF"}
+                      color={errors.mobile_number ? "#EF4444" : "#9CA3AF"}
                     />
                     <TextInput
-                      ref={emailInputRef}
-                      placeholder="you@example.com"
+                      ref={mobileInputRef}
+                      placeholder="0712345678 or 255712345678"
                       placeholderTextColor="#6B7280"
-                      keyboardType="email-address"
+                      keyboardType="phone-pad"
                       autoCapitalize="none"
-                      autoComplete="email"
-                      value={formData.email}
-                      onChangeText={handleEmailChange}
-                      onSubmitEditing={handleEmailSubmit}
+                      autoComplete="tel"
+                      value={formData.mobile_number}
+                      onChangeText={handleMobileChange}
+                      onSubmitEditing={handleMobileSubmit}
                       returnKeyType="next"
                       editable={!loading}
                       className="flex-1 ml-3 text-white"
@@ -381,22 +424,23 @@ export default function LoginScreen() {
                       }}
                       cursorColor="#3B82F6"
                       selectionColor="#3B82F6"
-                      textContentType="emailAddress"
+                      textContentType="telephoneNumber"
                       autoCorrect={false}
                       spellCheck={false}
+                      maxLength={15}
                     />
                   </View>
-                  {errors.email && (
+                  {errors.mobile_number && (
                     <Text className={`
                       ${isSmallScreen ? 'text-xs' : 'text-sm'}
                       text-red-400 mt-1.5 ml-2
                     `}>
-                      ⚠ {errors.email}
+                      ⚠ {errors.mobile_number}
                     </Text>
                   )}
                 </Animated.View>
 
-                {/* Password Field - ENLARGED */}
+                {/* Password Field */}
                 <Animated.View 
                   entering={FadeInDown.delay(600)}
                   className={`
@@ -495,7 +539,7 @@ export default function LoginScreen() {
                   </Link>
                 </Animated.View>
 
-                {/* Sign In Button - ENLARGED */}
+                {/* Sign In Button */}
                 <Animated.View entering={FadeInDown.delay(800)}>
                   <TouchableOpacity
                     className={`
@@ -552,7 +596,7 @@ export default function LoginScreen() {
                   `}>
                     Don`t have an account?{" "}
                   </Text>
-                  <Link href="/register" asChild>
+                  <Link href="/register/register" asChild>
                     <TouchableOpacity 
                       disabled={loading} 
                       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -568,7 +612,6 @@ export default function LoginScreen() {
                 </Animated.View>
               </Animated.View>
 
-              {/* Extra spacing when keyboard is visible */}
               {keyboardVisible && (
                 <View className={isSmallScreen ? 'h-20' : 'h-32'} />
               )}

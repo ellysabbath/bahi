@@ -1,370 +1,87 @@
 // services/passwordResetService.ts
-import passwordResetAPI, { APIResponse, PasswordStrength } from './passwordResetApi';
-
-export interface ResetState {
-  email: string;
-  otp: string;
-  resetToken: string | null;
-  password: string;
-  confirmPassword: string;
-  isLoading: boolean;
-  otpSent: boolean;
-  otpVerified: boolean;
-  passwordReset: boolean;
-  error: string | null;
-  passwordStrength: PasswordStrength;
-  countdown: number;
-}
+import passwordResetAPI, { APIResponse } from './passwordResetApi';
 
 class PasswordResetService {
-  private state: ResetState = {
-    email: '',
-    otp: '',
-    resetToken: null,
-    password: '',
-    confirmPassword: '',
-    isLoading: false,
-    otpSent: false,
-    otpVerified: false,
-    passwordReset: false,
-    error: null,
-    passwordStrength: {
-      hasMinLength: false,
-      hasUpperCase: false,
-      hasLowerCase: false,
-      hasNumber: false,
-      hasSpecialChar: false,
-    },
-    countdown: 0,
-  };
-
-  private listeners: ((state: ResetState) => void)[] = [];
-  private countdownInterval: NodeJS.Timeout | null = null;
+  private email: string = '';
+  private otp: string = '';
 
   /**
-   * Subscribe to state changes
-   */
-  subscribe(listener: (state: ResetState) => void) {
-    this.listeners.push(listener);
-    return () => {
-      const index = this.listeners.indexOf(listener);
-      if (index > -1) {
-        this.listeners.splice(index, 1);
-      }
-    };
-  }
-
-  /**
-   * Notify all listeners of state changes
-   */
-  private notify() {
-    this.listeners.forEach(listener => listener({ ...this.state }));
-  }
-
-  /**
-   * Get current state
-   */
-  getState(): ResetState {
-    return { ...this.state };
-  }
-
-  /**
-   * Request OTP for password reset
+   * Request password reset OTP via email
    */
   async requestOTP(email: string): Promise<APIResponse> {
-    // Validate email
     if (!email.trim()) {
-      this.setState({ error: 'Email is required' });
-      return { success: false, message: 'Email is required' };
+      return { success: false, message: 'Email address is required' };
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      this.setState({ error: 'Please enter a valid email address' });
-      return { success: false, message: 'Invalid email format' };
+    if (!passwordResetAPI.isValidEmail(email)) {
+      return { success: false, message: 'Please enter a valid email address' };
     }
 
-    this.setState({ 
-      email, 
-      isLoading: true, 
-      error: null,
-      otpSent: false,
-      otpVerified: false,
-      resetToken: null,
-    });
-
-    try {
-      const response = await passwordResetAPI.requestPasswordReset(email);
-      
-      if (response.success && response.reset_token) {
-        this.setState({
-          isLoading: false,
-          otpSent: true,
-          resetToken: response.reset_token,
-          error: null,
-        });
-
-        // Start countdown (15 minutes)
-        this.startCountdown(response.otp_expires_in || 900);
-      } else {
-        this.setState({
-          isLoading: false,
-          error: response.message || 'Failed to send OTP',
-        });
-      }
-
-      return response;
-    } catch (error: any) {
-      this.setState({
-        isLoading: false,
-        error: 'Network error. Please check your connection.',
-      });
-      return {
-        success: false,
-        message: 'Network error. Please check your connection.',
-      };
-    }
+    this.email = email.toLowerCase().trim();
+    return await passwordResetAPI.requestPasswordReset(this.email);
   }
 
   /**
    * Verify OTP
    */
   async verifyOTP(otp: string): Promise<APIResponse> {
-    if (!this.state.resetToken) {
-      this.setState({ error: 'Reset session expired. Please start over.' });
-      return { success: false, message: 'Reset session expired' };
+    if (!this.email) {
+      return { success: false, message: 'Email address is required' };
     }
 
     if (!passwordResetAPI.isValidOTP(otp)) {
-      this.setState({ error: 'Please enter a valid 6-digit OTP' });
-      return { success: false, message: 'Invalid OTP format' };
+      return { success: false, message: 'Please enter a valid 6-digit OTP' };
     }
 
-    this.setState({ 
-      otp, 
-      isLoading: true, 
-      error: null 
-    });
-
-    try {
-      const response = await passwordResetAPI.verifyOTP(this.state.resetToken, otp);
-      
-      if (response.success) {
-        this.setState({
-          isLoading: false,
-          otpVerified: true,
-          error: null,
-        });
-      } else {
-        this.setState({
-          isLoading: false,
-          error: response.message || 'Invalid OTP',
-        });
-      }
-
-      return response;
-    } catch (error: any) {
-      this.setState({
-        isLoading: false,
-        error: 'Failed to verify OTP. Please try again.',
-      });
-      return {
-        success: false,
-        message: 'Failed to verify OTP',
-      };
-    }
+    this.otp = otp;
+    return await passwordResetAPI.verifyOTP(this.email, otp);
   }
 
   /**
    * Reset password
    */
   async resetPassword(password: string, confirmPassword: string): Promise<APIResponse> {
-    if (!this.state.resetToken) {
-      this.setState({ error: 'Reset session expired. Please start over.' });
-      return { success: false, message: 'Reset session expired' };
+    if (!this.email) {
+      return { success: false, message: 'Email address is required' };
+    }
+
+    if (!this.otp) {
+      return { success: false, message: 'OTP is required' };
     }
 
     if (password !== confirmPassword) {
-      this.setState({ error: 'Passwords do not match' });
       return { success: false, message: 'Passwords do not match' };
     }
 
-    const strength = passwordResetAPI.validatePasswordStrength(password);
-    const score = passwordResetAPI.calculatePasswordStrength(strength);
-    
-    if (score < 3) {
-      this.setState({ 
-        error: 'Password is too weak. Please choose a stronger password.',
-        passwordStrength: strength,
-      });
-      return { 
-        success: false, 
-        message: 'Password is too weak. Please include uppercase, lowercase, numbers, and special characters.' 
-      };
+    if (!passwordResetAPI.isValidPassword(password)) {
+      return { success: false, message: 'Password must be at least 8 characters long' };
     }
 
-    this.setState({ 
-      password, 
-      confirmPassword, 
-      isLoading: true, 
-      error: null,
-      passwordStrength: strength,
-    });
-
-    try {
-      const response = await passwordResetAPI.resetPassword(
-        this.state.resetToken,
-        password,
-        confirmPassword
-      );
-      
-      if (response.success) {
-        this.setState({
-          isLoading: false,
-          passwordReset: true,
-          error: null,
-        });
-        
-        this.stopCountdown();
-      } else {
-        this.setState({
-          isLoading: false,
-          error: response.message,
-        });
-      }
-
-      return response;
-    } catch (error: any) {
-      this.setState({
-        isLoading: false,
-        error: 'Failed to reset password. Please try again.',
-      });
-      return {
-        success: false,
-        message: 'Failed to reset password',
-      };
-    }
+    return await passwordResetAPI.resetPassword(this.email, this.otp, password);
   }
 
   /**
-   * Resend OTP
+   * Get stored email
    */
-  async resendOTP(): Promise<APIResponse> {
-    if (!this.state.email) {
-      return { success: false, message: 'Email is required' };
-    }
-
-    return this.requestOTP(this.state.email);
+  getEmail(): string {
+    return this.email;
   }
 
   /**
-   * Update password and validate strength
+   * Set email
    */
-  updatePassword(password: string) {
-    const strength = passwordResetAPI.validatePasswordStrength(password);
-    this.setState({ 
-      password, 
-      passwordStrength: strength,
-      error: null,
-    });
+  setEmail(email: string) {
+    this.email = email.toLowerCase().trim();
   }
 
   /**
-   * Update confirm password
+   * Clear stored data
    */
-  updateConfirmPassword(confirmPassword: string) {
-    this.setState({ 
-      confirmPassword,
-      error: null,
-    });
-  }
-
-  /**
-   * Update OTP
-   */
-  updateOTP(otp: string) {
-    this.setState({ 
-      otp,
-      error: null,
-    });
-  }
-
-  /**
-   * Start countdown timer
-   */
-  private startCountdown(seconds: number) {
-    this.stopCountdown();
-    
-    this.setState({ countdown: seconds });
-    
-    this.countdownInterval = setInterval(() => {
-      this.setState(prev => {
-        const newCountdown = prev.countdown - 1;
-        if (newCountdown <= 0) {
-          this.stopCountdown();
-          return { ...prev, countdown: 0 };
-        }
-        return { ...prev, countdown: newCountdown };
-      });
-    }, 1000);
-  }
-
-  /**
-   * Stop countdown timer
-   */
-  private stopCountdown() {
-    if (this.countdownInterval) {
-      clearInterval(this.countdownInterval);
-      this.countdownInterval = null;
-    }
-  }
-
-  /**
-   * Get formatted countdown (MM:SS)
-   */
-  getFormattedCountdown(): string {
-    const minutes = Math.floor(this.state.countdown / 60);
-    const seconds = this.state.countdown % 60;
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  }
-
-  /**
-   * Reset service state
-   */
-  reset() {
-    this.stopCountdown();
-    this.state = {
-      email: '',
-      otp: '',
-      resetToken: null,
-      password: '',
-      confirmPassword: '',
-      isLoading: false,
-      otpSent: false,
-      otpVerified: false,
-      passwordReset: false,
-      error: null,
-      passwordStrength: {
-        hasMinLength: false,
-        hasUpperCase: false,
-        hasLowerCase: false,
-        hasNumber: false,
-        hasSpecialChar: false,
-      },
-      countdown: 0,
-    };
-    this.notify();
-  }
-
-  /**
-   * Set state and notify listeners
-   */
-  private setState(updates: Partial<ResetState>) {
-    this.state = { ...this.state, ...updates };
-    this.notify();
+  clear() {
+    this.email = '';
+    this.otp = '';
   }
 }
 
-// Export singleton instance
 export const passwordResetService = new PasswordResetService();
 export default passwordResetService;

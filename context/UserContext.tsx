@@ -2,24 +2,21 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 
-export type UserRole = 'mechanic' | 'garage_owner' | 'customer' | 'admin';
-
 export interface User {
+  // From CustomUser model
   id: string;
-  email: string;
-  first_name: string;
-  last_name: string;
-  phone: string;
-  city: string;
-  state: string;
-  role: UserRole;
-  role_display?: string;
-  is_email_verified: boolean;
-  registration_stage: number;
-  is_admin?: boolean;
-  is_mechanic?: boolean;
-  is_garage_owner?: boolean;
-  is_customer?: boolean;
+  mobile_number: string | null;
+  email: string | null;
+  fullname: string;
+  membership_number: string | null;
+  is_active: boolean;
+  is_staff: boolean;
+  is_verified: boolean;
+  region: string | null;
+  district: string | null;
+  date_joined: string;
+  last_login: string | null;
+  updated_at: string;
 }
 
 interface UserContextType {
@@ -54,9 +51,10 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const loadUserAndToken = async () => {
     try {
+      // Use SAME keys as authApi.ts
       const [userJson, storedToken] = await Promise.all([
-        AsyncStorage.getItem('@autofix_user'),
-        AsyncStorage.getItem('@autofix_token'),
+        AsyncStorage.getItem('quickfix_user_data'),      // Changed from '@autofix_user'
+        AsyncStorage.getItem('quickfix_access_token'),   // Changed from '@autofix_token'
       ]);
       
       if (userJson) {
@@ -81,15 +79,17 @@ export function UserProvider({ children }: { children: ReactNode }) {
       }
       
       if (newUser) {
-        await AsyncStorage.setItem('@autofix_user', JSON.stringify(newUser));
+        // Use SAME key as authApi.ts
+        await AsyncStorage.setItem('quickfix_user_data', JSON.stringify(newUser));
       } else {
-        await AsyncStorage.removeItem('@autofix_user');
+        await AsyncStorage.removeItem('quickfix_user_data');
       }
       
       if (newToken) {
-        await AsyncStorage.setItem('@autofix_token', newToken);
+        // Use SAME key as authApi.ts
+        await AsyncStorage.setItem('quickfix_access_token', newToken);
       } else {
-        await AsyncStorage.removeItem('@autofix_token');
+        await AsyncStorage.removeItem('quickfix_access_token');
       }
     } catch (error) {
       console.error('Failed to save user/token:', error);
@@ -100,7 +100,16 @@ export function UserProvider({ children }: { children: ReactNode }) {
     try {
       setUserState(null);
       setTokenState(null);
-      await AsyncStorage.multiRemove(['@autofix_user', '@autofix_token', '@autofix_csrf_token']);
+      // Clear ALL auth-related keys
+      await AsyncStorage.multiRemove([
+        'quickfix_access_token',
+        'quickfix_refresh_token',
+        'quickfix_user_data',
+        '@autofix_user',
+        '@autofix_token',
+        'access_token',
+        'refresh_token',
+      ]);
     } catch (error) {
       console.error('Failed to logout:', error);
     }
@@ -112,7 +121,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
     try {
       const updatedUser = { ...user, ...updates };
       setUserState(updatedUser);
-      await AsyncStorage.setItem('@autofix_user', JSON.stringify(updatedUser));
+      // Use SAME key as authApi.ts
+      await AsyncStorage.setItem('quickfix_user_data', JSON.stringify(updatedUser));
     } catch (error) {
       console.error('Failed to update user:', error);
       throw error;
