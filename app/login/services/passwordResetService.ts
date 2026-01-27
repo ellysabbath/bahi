@@ -34,7 +34,8 @@ class PasswordResetService {
     }
 
     this.otp = otp;
-    return await passwordResetAPI.verifyOTP(this.email, otp);
+    // FIX: Pass the email to the API call
+    return await passwordResetAPI.verifyOTP(this.email, this.otp);
   }
 
   /**

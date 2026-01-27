@@ -134,7 +134,7 @@ export default function Sidebar({ isVisible, onClose }: SidebarProps) {
       icon: 'book',
       iconType: 'material',
       route: '/dashboard/bookings',
-      // roles: ['mechanic', 'garage_owner', 'customer', 'admin'], // All roles
+      roles: ['mechanic', 'garage_owner', 'customer', 'admin'], // All roles
     },
     {
       id: 'garages',
@@ -142,7 +142,7 @@ export default function Sidebar({ isVisible, onClose }: SidebarProps) {
       icon: 'warehouse',
       iconType: 'fontawesome5',
       route: '/dashboard/garages',
-      // roles: ['mechanic', 'garage_owner', 'customer', 'admin'], // All roles
+      roles: ['mechanic', 'garage_owner', 'customer', 'admin'], // All roles
     },
     {
       id: 'services',

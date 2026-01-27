@@ -1,5 +1,5 @@
 // app/visualization.tsx
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -15,22 +15,30 @@ import {
   Alert,
   Share,
   Modal,
+  Animated,
+  Easing,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { Link } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
-import { BarChart, LineChart, PieChart, ProgressChart } from 'react-native-chart-kit';
+import { 
+  BarChart, 
+  LineChart, 
+  PieChart, 
+  ProgressChart,
+  ContributionGraph,
+  StackedBarChart 
+} from 'react-native-chart-kit';
+import Svg, { Circle, Path, G, Text as SvgText } from 'react-native-svg';
 
-// Type definitions
+// Type definitions matching your backend
 interface DonationSummaryData {
   summary: {
     total_donations: number;
     total_amount: number;
     total_zaka: number;
-    total_ctf_donations: number;
-    total_church_donations: number;
     total_ctf: number;
     total_church: number;
     total_all: number;
@@ -42,15 +50,14 @@ interface DonationSummaryData {
     percentage: number;
   }>;
   top_donors: Array<{
-    user__id: number;
-    user__fullname: string;
-    user__mobile_number: string;
+    doner__id: number;
+    doner__fullname: string;
+    doner__mobile_number: string;
     total_donated: number;
     donation_count: number;
   }>;
   top_churches: Array<{
-    church__id: number;
-    church__church_name: string;
+    church: string;
     total_received: number;
     donation_count: number;
   }>;
@@ -61,7 +68,7 @@ interface DonationSummaryData {
   }>;
 }
 
-const API_URL = 'https://mhazini.pythonanywhere.com/api/auth/donations/summary/';
+const API_URL = 'https://mhazini.pythonanywhere.com/api/auth/reports/total/summary/';
 const { width, height } = Dimensions.get('window');
 
 const VisualizationScreen: React.FC = () => {
@@ -74,8 +81,13 @@ const VisualizationScreen: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>('overview');
-  const [showThemeModal, setShowThemeModal] = useState<boolean>(false);
   const [selectedChartType, setSelectedChartType] = useState<string>('bar');
+  const [selectedTimeRange, setSelectedTimeRange] = useState<string>('monthly');
+  const [animationValues] = useState({
+    cards: new Animated.Value(0),
+    charts: new Animated.Value(0),
+    stats: new Animated.Value(0),
+  });
 
   // Theme colors
   const colors = {
@@ -101,6 +113,11 @@ const VisualizationScreen: React.FC = () => {
       gradientEnd: '#7c3aed',
       chartGrid: '#e2e8f0',
       chartText: '#64748b',
+      purple: '#8b5cf6',
+      pink: '#ec4899',
+      indigo: '#6366f1',
+      teal: '#14b8a6',
+      orange: '#f97316',
     },
     dark: {
       background: '#0f172a',
@@ -124,28 +141,29 @@ const VisualizationScreen: React.FC = () => {
       gradientEnd: '#4f46e5',
       chartGrid: '#334155',
       chartText: '#cbd5e1',
+      purple: '#a78bfa',
+      pink: '#f472b6',
+      indigo: '#818cf8',
+      teal: '#2dd4bf',
+      orange: '#fb923c',
     },
   };
 
   const currentColors = colors[theme];
 
-  // Chart colors
-  const chartColors = {
-    primary: ['#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe'],
-    success: ['#10b981', '#34d399', '#6ee7b7', '#a7f3d0'],
-    warning: ['#f59e0b', '#fbbf24', '#fcd34d', '#fde68a'],
-    danger: ['#ef4444', '#f87171', '#fca5a5', '#fecaca'],
-    gradient: ['#4f46e5', '#7c3aed', '#a855f7', '#d946ef'],
-    rainbow: ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7'],
-  };
+  // Chart colors array
+  const chartColors = [
+    '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+    '#ec4899', '#6366f1', '#14b8a6', '#f97316', '#06b6d4'
+  ];
 
   // Chart configuration
   const chartConfig = {
     backgroundGradientFrom: currentColors.cardBackground,
     backgroundGradientTo: currentColors.cardBackground,
     decimalPlaces: 0,
-    color: (opacity = 1) => theme === 'dark' ? `rgba(203, 213, 225, ${opacity})` : `rgba(71, 85, 105, ${opacity})`,
-    labelColor: (opacity = 1) => theme === 'dark' ? `rgba(203, 213, 225, ${opacity})` : `rgba(71, 85, 105, ${opacity})`,
+    color: (opacity = 1) => currentColors.textSecondary,
+    labelColor: (opacity = 1) => currentColors.textSecondary,
     style: {
       borderRadius: 16,
     },
@@ -161,6 +179,41 @@ const VisualizationScreen: React.FC = () => {
     },
   };
 
+  // Animated values
+  const rotateAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.9)).current;
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  // Start animations
+  useEffect(() => {
+    if (summaryData) {
+      // Rotation animation for loading
+      Animated.loop(
+        Animated.timing(rotateAnim, {
+          toValue: 1,
+          duration: 2000,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        })
+      ).start();
+
+      // Scale animation for cards
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        friction: 8,
+        tension: 40,
+        useNativeDriver: true,
+      }).start();
+
+      // Fade in animation
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 500,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [summaryData]);
+
   // Toggle theme
   const toggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
@@ -168,11 +221,10 @@ const VisualizationScreen: React.FC = () => {
 
   // Format currency
   const formatCurrency = (amount: number): string => {
-    return new Intl.NumberFormat('en-TZ', {
-      style: 'currency',
-      currency: 'TZS',
+    if (!amount) return 'TSh 0';
+    return `TSh ${new Intl.NumberFormat('en-TZ', {
       minimumFractionDigits: 0,
-    }).format(amount);
+    }).format(amount)}`;
   };
 
   // Format number with commas
@@ -180,11 +232,31 @@ const VisualizationScreen: React.FC = () => {
     return new Intl.NumberFormat('en-US').format(num);
   };
 
+  // Format percentage
+  const formatPercentage = (value: number): string => {
+    return `${value.toFixed(1)}%`;
+  };
+
   // Fetch data from API
   const fetchFromAPI = useCallback(async (): Promise<void> => {
     try {
       setError(null);
-      const response = await fetch(API_URL);
+      const token = await AsyncStorage.getItem('quickfix_access_token');
+      
+      if (!token) {
+        throw new Error('Authentication required');
+      }
+
+      const response = await fetch(API_URL, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      });
+      
+      if (response.status === 401) {
+        throw new Error('Session expired. Please login again.');
+      }
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -199,7 +271,7 @@ const VisualizationScreen: React.FC = () => {
       setSummaryData(data);
       setOffline(false);
       setLastUpdated(new Date());
-    } catch (error) {
+    } catch (error: any) {
       console.error('API fetch error:', error);
       // Try to load from storage
       const storedData = await AsyncStorage.getItem('visualization_data');
@@ -211,7 +283,7 @@ const VisualizationScreen: React.FC = () => {
           setLastUpdated(new Date(storedTime));
         }
       } else {
-        setError('Failed to fetch data. Please check your connection.');
+        setError(error.message || 'Failed to fetch data. Please check your connection.');
       }
     }
   }, []);
@@ -260,14 +332,17 @@ const VisualizationScreen: React.FC = () => {
   // Handle share
   const handleShare = async () => {
     try {
-      const message = `📊 Donation Visualization Summary\n\n` +
+      const message = `📊 SDA CTF Donation Summary\n\n` +
         `Total Donations: ${summaryData?.summary.total_donations}\n` +
         `Total Amount: ${formatCurrency(summaryData?.summary.total_amount || 0)}\n` +
+        `Zaka: ${formatCurrency(summaryData?.summary.total_zaka || 0)}\n` +
+        `CTF Total: ${formatCurrency(summaryData?.summary.total_ctf || 0)}\n` +
+        `Church Total: ${formatCurrency(summaryData?.summary.total_church || 0)}\n` +
         `Last Updated: ${lastUpdated?.toLocaleDateString()}`;
       
       await Share.share({
         message,
-        title: 'Donation Visualization',
+        title: 'SDA CTF Donation Visualization',
       });
     } catch (error) {
       console.error('Error sharing:', error);
@@ -280,8 +355,9 @@ const VisualizationScreen: React.FC = () => {
     if (!summaryData?.monthly_trend) return { labels: [], datasets: [{ data: [] }] };
     
     const labels = summaryData.monthly_trend.map(item => {
-      const date = new Date(item.month + '-01');
-      return date.toLocaleDateString('en-US', { month: 'short' });
+      const [year, month] = item.month.split('-');
+      return new Date(parseInt(year), parseInt(month) - 1, 1)
+        .toLocaleDateString('en-US', { month: 'short' });
     });
     
     const data = summaryData.monthly_trend.map(item => item.total / 1000);
@@ -290,7 +366,7 @@ const VisualizationScreen: React.FC = () => {
       labels,
       datasets: [{
         data,
-        color: (opacity = 1) => theme === 'dark' ? `rgba(59, 130, 246, ${opacity})` : `rgba(37, 99, 235, ${opacity})`,
+        color: (opacity = 1) => currentColors.buttonPrimary,
         strokeWidth: 2,
       }],
     };
@@ -300,9 +376,9 @@ const VisualizationScreen: React.FC = () => {
     if (!summaryData?.type_distribution) return [];
     
     return summaryData.type_distribution.map((item, index) => ({
-      name: item.donation_type.charAt(0).toUpperCase() + item.donation_type.slice(1),
+      name: item.donation_type.replace('_', ' ').toUpperCase(),
       population: item.total,
-      color: chartColors.rainbow[index % chartColors.rainbow.length],
+      color: chartColors[index % chartColors.length],
       legendFontColor: currentColors.textSecondary,
       legendFontSize: 12,
     }));
@@ -312,21 +388,239 @@ const VisualizationScreen: React.FC = () => {
     if (!summaryData?.type_distribution) return [];
     
     return summaryData.type_distribution.map((item, index) => ({
-      name: item.donation_type.charAt(0).toUpperCase() + item.donation_type.slice(1),
+      name: item.donation_type.replace('_', ' ').toUpperCase(),
       population: item.count,
-      color: chartColors.success[index % chartColors.success.length],
+      color: chartColors[(index + 2) % chartColors.length],
       legendFontColor: currentColors.textSecondary,
       legendFontSize: 12,
     }));
+  };
+
+  const prepareAllocationData = () => {
+    if (!summaryData?.summary) return [];
+    
+    return [
+      {
+        name: 'ZAKA',
+        amount: summaryData.summary.total_zaka,
+        color: chartColors[0],
+      },
+      {
+        name: 'CTF',
+        amount: summaryData.summary.total_ctf,
+        color: chartColors[1],
+      },
+      {
+        name: 'CHURCH',
+        amount: summaryData.summary.total_church,
+        color: chartColors[2],
+      },
+    ];
+  };
+
+  // Custom Polar Chart Component
+  const PolarChart = ({ data, size = 200 }: { data: any[], size?: number }) => {
+    const radius = size / 2 - 20;
+    const center = size / 2;
+    
+    // Calculate angles and coordinates
+    const segments = data.map((item, index) => {
+      const angle = (index / data.length) * Math.PI * 2;
+      const value = item.amount / Math.max(...data.map(d => d.amount));
+      const segmentRadius = radius * value;
+      
+      return {
+        ...item,
+        angle,
+        x: center + segmentRadius * Math.cos(angle - Math.PI / 2),
+        y: center + segmentRadius * Math.sin(angle - Math.PI / 2),
+        radius: segmentRadius,
+      };
+    });
+
+    return (
+      <Svg width={size} height={size}>
+        {/* Grid circles */}
+        <Circle cx={center} cy={center} r={radius * 0.25} fill="none" stroke={currentColors.chartGrid} strokeWidth="1" strokeDasharray="5,5" />
+        <Circle cx={center} cy={center} r={radius * 0.5} fill="none" stroke={currentColors.chartGrid} strokeWidth="1" strokeDasharray="5,5" />
+        <Circle cx={center} cy={center} r={radius * 0.75} fill="none" stroke={currentColors.chartGrid} strokeWidth="1" strokeDasharray="5,5" />
+        <Circle cx={center} cy={center} r={radius} fill="none" stroke={currentColors.chartGrid} strokeWidth="1" />
+        
+        {/* Grid lines */}
+        {[0, 45, 90, 135, 180, 225, 270, 315].map(angle => {
+          const rad = (angle * Math.PI) / 180;
+          const x1 = center + radius * Math.cos(rad);
+          const y1 = center + radius * Math.sin(rad);
+          return (
+            <Path
+              key={angle}
+              d={`M${center} ${center} L${x1} ${y1}`}
+              stroke={currentColors.chartGrid}
+              strokeWidth="1"
+            />
+          );
+        })}
+        
+        {/* Data segments */}
+        {segments.map((segment, index) => (
+          <G key={index}>
+            <Path
+              d={`M${center} ${center} L${segment.x} ${segment.y}`}
+              stroke={segment.color}
+              strokeWidth="3"
+              strokeOpacity="0.7"
+            />
+            <Circle
+              cx={segment.x}
+              cy={segment.y}
+              r="8"
+              fill={segment.color}
+              fillOpacity="0.8"
+            />
+            <SvgText
+              x={center + (radius + 20) * Math.cos(segment.angle - Math.PI / 2)}
+              y={center + (radius + 20) * Math.sin(segment.angle - Math.PI / 2)}
+              fill={currentColors.textPrimary}
+              fontSize="12"
+              fontWeight="bold"
+              textAnchor="middle"
+            >
+              {segment.name}
+            </SvgText>
+            <SvgText
+              x={segment.x}
+              y={segment.y - 15}
+              fill={currentColors.textSecondary}
+              fontSize="10"
+              textAnchor="middle"
+            >
+              {formatCurrency(segment.amount)}
+            </SvgText>
+          </G>
+        ))}
+      </Svg>
+    );
+  };
+
+  // Custom Radar Chart Component
+  const RadarChart = ({ data, size = 200 }: { data: any[], size?: number }) => {
+    const radius = size / 2 - 20;
+    const center = size / 2;
+    const sides = data.length;
+    
+    // Create polygon points
+    const points = data.map((item, index) => {
+      const angle = (index / sides) * Math.PI * 2 - Math.PI / 2;
+      const value = item.amount / Math.max(...data.map(d => d.amount));
+      const x = center + radius * value * Math.cos(angle);
+      const y = center + radius * value * Math.sin(angle);
+      return { x, y };
+    });
+
+    const pathData = points.map((point, index) => 
+      `${index === 0 ? 'M' : 'L'}${point.x} ${point.y}`
+    ).join(' ') + ' Z';
+
+    return (
+      <Svg width={size} height={size}>
+        {/* Grid polygons */}
+        {[0.25, 0.5, 0.75, 1].map(scale => {
+          const gridPoints = data.map((_, index) => {
+            const angle = (index / sides) * Math.PI * 2 - Math.PI / 2;
+            const x = center + radius * scale * Math.cos(angle);
+            const y = center + radius * scale * Math.sin(angle);
+            return { x, y };
+          });
+          
+          const gridPath = gridPoints.map((point, index) => 
+            `${index === 0 ? 'M' : 'L'}${point.x} ${point.y}`
+          ).join(' ') + ' Z';
+
+          return (
+            <Path
+              key={scale}
+              d={gridPath}
+              fill="none"
+              stroke={currentColors.chartGrid}
+              strokeWidth="1"
+            />
+          );
+        })}
+        
+        {/* Grid lines */}
+        {points.map((point, index) => (
+          <Path
+            key={`line-${index}`}
+            d={`M${center} ${center} L${point.x} ${point.y}`}
+            stroke={currentColors.chartGrid}
+            strokeWidth="1"
+          />
+        ))}
+        
+        {/* Data polygon */}
+        <Path
+          d={pathData}
+          fill={currentColors.buttonPrimary}
+          fillOpacity="0.2"
+          stroke={currentColors.buttonPrimary}
+          strokeWidth="2"
+        />
+        
+        {/* Data points */}
+        {points.map((point, index) => (
+          <G key={`point-${index}`}>
+            <Circle
+              cx={point.x}
+              cy={point.y}
+              r="6"
+              fill={chartColors[index % chartColors.length]}
+            />
+            <SvgText
+              x={point.x}
+              y={point.y - 12}
+              fill={currentColors.textPrimary}
+              fontSize="10"
+              fontWeight="bold"
+              textAnchor="middle"
+            >
+              {data[index].name}
+            </SvgText>
+            <SvgText
+              x={point.x}
+              y={point.y + 25}
+              fill={currentColors.textSecondary}
+              fontSize="9"
+              textAnchor="middle"
+            >
+              {formatCurrency(data[index].amount)}
+            </SvgText>
+          </G>
+        ))}
+      </Svg>
+    );
   };
 
   // Loading state
   if (loading && !summaryData) {
     return (
       <View style={[styles.centerContainer, { backgroundColor: currentColors.background }]}>
-        <ActivityIndicator size="large" color={currentColors.buttonPrimary} />
-        <Text style={{ color: currentColors.textSecondary, marginTop: 16, fontSize: 16 }}>
-          Loading visualization data...
+        <Animated.View
+          style={{
+            transform: [{
+              rotate: rotateAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: ['0deg', '360deg'],
+              }),
+            }],
+          }}
+        >
+          <Ionicons name="stats-chart" size={60} color={currentColors.buttonPrimary} />
+        </Animated.View>
+        <Text style={{ color: currentColors.textSecondary, marginTop: 20, fontSize: 18, fontWeight: '600' }}>
+          Loading Visualization Data...
+        </Text>
+        <Text style={{ color: currentColors.textTertiary, marginTop: 8, fontSize: 14 }}>
+          Fetching donation insights...
         </Text>
       </View>
     );
@@ -340,14 +634,15 @@ const VisualizationScreen: React.FC = () => {
         <Text style={{ color: currentColors.danger, fontSize: 22, fontWeight: 'bold', marginTop: 24, marginBottom: 8 }}>
           Unable to Load Data
         </Text>
-        <Text style={{ color: currentColors.textSecondary, textAlign: 'center', marginBottom: 32, fontSize: 16 }}>
+        <Text style={{ color: currentColors.textSecondary, textAlign: 'center', marginBottom: 32, fontSize: 16, lineHeight: 24 }}>
           {error}
         </Text>
         <TouchableOpacity 
           style={[styles.primaryButton, { backgroundColor: currentColors.buttonPrimary }]}
           onPress={handleRetry}
         >
-          <Text style={{ color: '#ffffff', fontSize: 16, fontWeight: '600' }}>Retry</Text>
+          <Ionicons name="refresh" size={20} color="#ffffff" style={{ marginRight: 8 }} />
+          <Text style={{ color: '#ffffff', fontSize: 16, fontWeight: '600' }}>Retry Connection</Text>
         </TouchableOpacity>
       </View>
     );
@@ -355,104 +650,129 @@ const VisualizationScreen: React.FC = () => {
 
   // Render Overview Tab
   const renderOverviewTab = () => (
-    <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
+    <Animated.ScrollView 
+      style={[styles.tabContent, { opacity: fadeAnim }]}
+      showsVerticalScrollIndicator={false}
+    >
       {/* Summary Cards */}
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: currentColors.textPrimary }]}>
-          📊 Quick Overview
-        </Text>
+      <Animated.View style={[
+        styles.section,
+        { transform: [{ scale: scaleAnim }] }
+      ]}>
+        <View style={styles.sectionHeader}>
+          <Text style={[styles.sectionTitle, { color: currentColors.textPrimary }]}>
+            📊 Quick Overview
+          </Text>
+          <TouchableOpacity style={styles.timeRangeSelector}>
+            <Text style={[styles.timeRangeText, { color: currentColors.textSecondary }]}>
+              {selectedTimeRange.toUpperCase()}
+            </Text>
+            <Ionicons name="chevron-down" size={16} color={currentColors.textSecondary} />
+          </TouchableOpacity>
+        </View>
         <View style={styles.summaryGrid}>
-          <View style={[styles.summaryCard, { backgroundColor: currentColors.cardBackground }]}>
-            <LinearGradient
-              colors={[chartColors.primary[0], chartColors.primary[2]]}
-              style={styles.summaryIcon}
+          {[
+            { 
+              icon: 'receipt-outline', 
+              label: 'Total Donations', 
+              value: summaryData!.summary.total_donations,
+              color: chartColors[0],
+              format: formatNumber 
+            },
+            { 
+              icon: 'cash-outline', 
+              label: 'Total Amount', 
+              value: summaryData!.summary.total_amount,
+              color: chartColors[1],
+              format: formatCurrency 
+            },
+            { 
+              icon: 'home-outline', 
+              label: 'Zaka', 
+              value: summaryData!.summary.total_zaka,
+              color: chartColors[2],
+              format: formatCurrency 
+            },
+            { 
+              icon: 'business-outline', 
+              label: 'CTF Total', 
+              value: summaryData!.summary.total_ctf,
+              color: chartColors[3],
+              format: formatCurrency 
+            },
+          ].map((item, index) => (
+            <Animated.View 
+              key={index}
+              style={[
+                styles.summaryCard, 
+                { 
+                  backgroundColor: currentColors.cardBackground,
+                  opacity: fadeAnim,
+                  transform: [{
+                    translateY: fadeAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [50, 0],
+                    }),
+                  }],
+                }
+              ]}
             >
-              <Ionicons name="receipt-outline" size={24} color="#ffffff" />
-            </LinearGradient>
-            <Text style={[styles.summaryValue, { color: currentColors.textPrimary }]}>
-              {formatNumber(summaryData!.summary.total_donations)}
-            </Text>
-            <Text style={[styles.summaryLabel, { color: currentColors.textSecondary }]}>
-              Total Donations
-            </Text>
-          </View>
+              <LinearGradient
+                colors={[item.color, `${item.color}80`]}
+                style={styles.summaryIcon}
+              >
+                <Ionicons name={item.icon as any} size={24} color="#ffffff" />
+              </LinearGradient>
+              <Text style={[styles.summaryValue, { color: currentColors.textPrimary }]}>
+                {item.format(item.value)}
+              </Text>
+              <Text style={[styles.summaryLabel, { color: currentColors.textSecondary }]}>
+                {item.label}
+              </Text>
+            </Animated.View>
+          ))}
+        </View>
+      </Animated.View>
 
-          <View style={[styles.summaryCard, { backgroundColor: currentColors.cardBackground }]}>
-            <LinearGradient
-              colors={[chartColors.success[0], chartColors.success[2]]}
-              style={styles.summaryIcon}
+      {/* Chart Type Selector */}
+      <View style={styles.section}>
+        <View style={styles.chartTypeContainer}>
+          {['bar', 'line', 'polar', 'radar'].map((type) => (
+            <TouchableOpacity
+              key={type}
+              style={[
+                styles.chartTypeButton,
+                selectedChartType === type && styles.activeChartTypeButton,
+                { backgroundColor: currentColors.cardBackground }
+              ]}
+              onPress={() => setSelectedChartType(type)}
             >
-              <Ionicons name="cash-outline" size={24} color="#ffffff" />
-            </LinearGradient>
-            <Text style={[styles.summaryValue, { color: currentColors.textPrimary }]}>
-              {formatCurrency(summaryData!.summary.total_amount)}
-            </Text>
-            <Text style={[styles.summaryLabel, { color: currentColors.textSecondary }]}>
-              Total Amount
-            </Text>
-          </View>
-
-          <View style={[styles.summaryCard, { backgroundColor: currentColors.cardBackground }]}>
-            <LinearGradient
-              colors={[chartColors.warning[0], chartColors.warning[2]]}
-              style={styles.summaryIcon}
-            >
-              <Ionicons name="people-outline" size={24} color="#ffffff" />
-            </LinearGradient>
-            <Text style={[styles.summaryValue, { color: currentColors.textPrimary }]}>
-              {formatNumber(summaryData!.top_donors.length)}
-            </Text>
-            <Text style={[styles.summaryLabel, { color: currentColors.textSecondary }]}>
-              Top Donors
-            </Text>
-          </View>
-
-          <View style={[styles.summaryCard, { backgroundColor: currentColors.cardBackground }]}>
-            <LinearGradient
-              colors={[chartColors.danger[0], chartColors.danger[2]]}
-              style={styles.summaryIcon}
-            >
-              <Ionicons name="business-outline" size={24} color="#ffffff" />
-            </LinearGradient>
-            <Text style={[styles.summaryValue, { color: currentColors.textPrimary }]}>
-              {formatNumber(summaryData!.top_churches.length)}
-            </Text>
-            <Text style={[styles.summaryLabel, { color: currentColors.textSecondary }]}>
-              Top Churches
-            </Text>
-          </View>
+              <Ionicons 
+                name={
+                  type === 'bar' ? 'bar-chart' :
+                  type === 'line' ? 'trending-up' :
+                  type === 'polar' ? 'navigate-circle' :
+                  'speedometer'
+                } 
+                size={20} 
+                color={selectedChartType === type ? '#ffffff' : currentColors.iconSecondary} 
+              />
+              <Text style={[
+                styles.chartTypeText,
+                { color: selectedChartType === type ? '#ffffff' : currentColors.textSecondary }
+              ]}>
+                {type.charAt(0).toUpperCase() + type.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
       </View>
 
-      {/* Monthly Trend Chart */}
+      {/* Main Chart */}
       <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: currentColors.textPrimary }]}>
-            📈 Monthly Trend
-          </Text>
-          <View style={styles.chartTypeSelector}>
-            <TouchableOpacity
-              style={[styles.chartTypeButton, selectedChartType === 'line' && styles.activeChartTypeButton]}
-              onPress={() => setSelectedChartType('line')}
-            >
-              <Ionicons 
-                name="trending-up" 
-                size={20} 
-                color={selectedChartType === 'line' ? '#ffffff' : currentColors.iconSecondary} 
-              />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.chartTypeButton, selectedChartType === 'bar' && styles.activeChartTypeButton]}
-              onPress={() => setSelectedChartType('bar')}
-            >
-              <Ionicons 
-                name="bar-chart" 
-                size={20} 
-                color={selectedChartType === 'bar' ? '#ffffff' : currentColors.iconSecondary} 
-              />
-            </TouchableOpacity>
-          </View>
-        </View>
+        <Text style={[styles.sectionTitle, { color: currentColors.textPrimary }]}>
+          📈 Monthly Trend
+        </Text>
         
         <View style={[styles.chartContainer, { backgroundColor: currentColors.cardBackground }]}>
           {selectedChartType === 'line' ? (
@@ -464,8 +784,9 @@ const VisualizationScreen: React.FC = () => {
               bezier
               style={styles.chart}
               formatYLabel={(value) => `${value}K`}
+              segments={5}
             />
-          ) : (
+          ) : selectedChartType === 'bar' ? (
             <BarChart
               data={prepareMonthlyChartData()}
               width={width - 60}
@@ -473,15 +794,44 @@ const VisualizationScreen: React.FC = () => {
               chartConfig={chartConfig}
               style={styles.chart}
               showValuesOnTopOfBars
+              fromZero
             />
-          )}
-          <View style={styles.chartLegend}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendColor, { backgroundColor: chartColors.primary[0] }]} />
-              <Text style={[styles.legendText, { color: currentColors.textSecondary }]}>
-                Total Amount (in thousands)
-              </Text>
+          ) : selectedChartType === 'polar' ? (
+            <View style={styles.customChartContainer}>
+              <PolarChart 
+                data={prepareAllocationData()} 
+                size={width - 60}
+              />
             </View>
+          ) : (
+            <View style={styles.customChartContainer}>
+              <RadarChart 
+                data={prepareAllocationData()} 
+                size={width - 60}
+              />
+            </View>
+          )}
+          
+          <View style={styles.chartLegend}>
+            {selectedChartType === 'polar' || selectedChartType === 'radar' ? (
+              <View style={styles.legendGrid}>
+                {prepareAllocationData().map((item, index) => (
+                  <View key={index} style={styles.legendItem}>
+                    <View style={[styles.legendColor, { backgroundColor: item.color }]} />
+                    <Text style={[styles.legendText, { color: currentColors.textSecondary }]}>
+                      {item.name}: {formatCurrency(item.amount)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <View style={styles.legendItem}>
+                <View style={[styles.legendColor, { backgroundColor: currentColors.buttonPrimary }]} />
+                <Text style={[styles.legendText, { color: currentColors.textSecondary }]}>
+                  Total Amount (in thousands)
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       </View>
@@ -502,11 +852,16 @@ const VisualizationScreen: React.FC = () => {
               accessor="population"
               backgroundColor="transparent"
               paddingLeft="15"
-              absolute
+              hasLegend={false}
             />
-            <Text style={[styles.chartTitle, { color: currentColors.textPrimary }]}>
-              By Amount
-            </Text>
+            <View style={styles.chartStats}>
+              <Text style={[styles.chartTitle, { color: currentColors.textPrimary }]}>
+                By Amount
+              </Text>
+              <Text style={[styles.chartSubtitle, { color: currentColors.textSecondary }]}>
+                Total: {formatCurrency(summaryData!.summary.total_amount)}
+              </Text>
+            </View>
           </View>
 
           <View style={[styles.chartContainer, styles.smallChart, { backgroundColor: currentColors.cardBackground }]}>
@@ -518,25 +873,30 @@ const VisualizationScreen: React.FC = () => {
               accessor="population"
               backgroundColor="transparent"
               paddingLeft="15"
-              absolute
+              hasLegend={false}
             />
-            <Text style={[styles.chartTitle, { color: currentColors.textPrimary }]}>
-              By Count
-            </Text>
+            <View style={styles.chartStats}>
+              <Text style={[styles.chartTitle, { color: currentColors.textPrimary }]}>
+                By Count
+              </Text>
+              <Text style={[styles.chartSubtitle, { color: currentColors.textSecondary }]}>
+                Total: {formatNumber(summaryData!.summary.total_donations)}
+              </Text>
+            </View>
           </View>
         </View>
       </View>
 
-      {/* Progress Chart */}
+      {/* Progress Allocation */}
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: currentColors.textPrimary }]}>
-          📊 Allocation Progress
+          📊 Allocation Breakdown
         </Text>
         
         <View style={[styles.chartContainer, { backgroundColor: currentColors.cardBackground }]}>
           <ProgressChart
             data={{
-              labels: ['Zaka', 'CTF', 'Church'],
+              labels: ['ZAKA', 'CTF', 'CHURCH'],
               data: [
                 summaryData!.summary.total_zaka / summaryData!.summary.total_amount,
                 summaryData!.summary.total_ctf / summaryData!.summary.total_amount,
@@ -544,144 +904,161 @@ const VisualizationScreen: React.FC = () => {
               ]
             }}
             width={width - 60}
-            height={220}
+            height={180}
             strokeWidth={16}
             radius={32}
-            chartConfig={chartConfig}
+            chartConfig={{
+              ...chartConfig,
+              color: (opacity = 1, index) => 
+                index === 0 ? chartColors[0] :
+                index === 1 ? chartColors[1] : chartColors[2],
+            }}
             hideLegend={false}
             style={styles.chart}
           />
-          <View style={styles.progressLabels}>
-            {['Zaka', 'CTF', 'Church'].map((label, index) => {
-              const percentage = [
-                summaryData!.summary.total_zaka / summaryData!.summary.total_amount,
-                summaryData!.summary.total_ctf / summaryData!.summary.total_amount,
-                summaryData!.summary.total_church / summaryData!.summary.total_amount,
-              ][index];
-              
-              return (
-                <View key={index} style={styles.progressLabelItem}>
-                  <View style={[styles.progressColor, { backgroundColor: chartColors.rainbow[index] }]} />
-                  <Text style={[styles.progressLabelText, { color: currentColors.textSecondary }]}>
-                    {label}: {(percentage * 100).toFixed(1)}%
+          <View style={styles.progressDetails}>
+            {prepareAllocationData().map((item, index) => (
+              <View key={index} style={styles.progressDetailItem}>
+                <View style={[styles.progressColor, { backgroundColor: item.color }]} />
+                <View style={styles.progressInfo}>
+                  <Text style={[styles.progressLabel, { color: currentColors.textPrimary }]}>
+                    {item.name}
                   </Text>
+                  <View style={styles.progressValues}>
+                    <Text style={[styles.progressAmount, { color: currentColors.textPrimary }]}>
+                      {formatCurrency(item.amount)}
+                    </Text>
+                    <Text style={[styles.progressPercentage, { color: currentColors.textSecondary }]}>
+                      {formatPercentage((item.amount / summaryData!.summary.total_amount) * 100)}
+                    </Text>
+                  </View>
                 </View>
-              );
-            })}
+              </View>
+            ))}
           </View>
         </View>
       </View>
-    </ScrollView>
+    </Animated.ScrollView>
   );
 
   // Render Donors Tab
   const renderDonorsTab = () => (
     <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
-      <Text style={[styles.sectionTitle, { color: currentColors.textPrimary, marginHorizontal: 20 }]}>
-        🏆 Top Donors
-      </Text>
-      
-      {summaryData!.top_donors.map((donor, index) => (
-        <View key={donor.user__id} style={[styles.donorCard, { backgroundColor: currentColors.cardBackground }]}>
-          <View style={styles.donorHeader}>
-            <View style={styles.donorRank}>
-              <Text style={styles.donorRankText}>#{index + 1}</Text>
-            </View>
-            <View style={styles.donorInfo}>
-              <Text style={[styles.donorName, { color: currentColors.textPrimary }]}>
-                {donor.user__fullname}
-              </Text>
-              <Text style={[styles.donorPhone, { color: currentColors.textSecondary }]}>
-                {donor.user__mobile_number}
-              </Text>
-            </View>
-            <View style={styles.donorStats}>
-              <Text style={[styles.donorAmount, { color: currentColors.success }]}>
-                {formatCurrency(donor.total_donated)}
-              </Text>
-            </View>
-          </View>
-          
-          {/* Custom progress bar */}
-          <View style={styles.donorProgress}>
-            <View style={styles.progressBarContainer}>
-              <View style={[styles.progressBar, { 
-                width: `${(donor.donation_count / Math.max(...summaryData!.top_donors.map(d => d.donation_count)) * 100)}%`,
-                backgroundColor: chartColors.rainbow[index % chartColors.rainbow.length]
-              }]} />
-            </View>
-            <View style={styles.donorDetails}>
-              <View style={styles.donorDetailItem}>
-                <Ionicons name="receipt-outline" size={16} color={currentColors.iconSecondary} />
-                <Text style={[styles.donorDetailText, { color: currentColors.textSecondary }]}>
-                  {donor.donation_count} donations
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: currentColors.textPrimary }]}>
+          🏆 Top Donors
+        </Text>
+        
+        {summaryData!.top_donors.slice(0, 10).map((donor, index) => (
+          <View key={index} style={[styles.donorCard, { backgroundColor: currentColors.cardBackground }]}>
+            <View style={styles.donorHeader}>
+              <View style={[
+                styles.donorRank,
+                { 
+                  backgroundColor: 
+                    index === 0 ? '#FFD700' :
+                    index === 1 ? '#C0C0C0' :
+                    index === 2 ? '#CD7F32' : currentColors.buttonSecondary 
+                }
+              ]}>
+                <Text style={styles.donorRankText}>#{index + 1}</Text>
+              </View>
+              <View style={styles.donorInfo}>
+                <Text style={[styles.donorName, { color: currentColors.textPrimary }]}>
+                  {donor.doner__fullname || `Donor ${donor.doner__id}`}
+                </Text>
+                <Text style={[styles.donorPhone, { color: currentColors.textSecondary }]}>
+                  {donor.doner__mobile_number || 'No phone'}
                 </Text>
               </View>
-              <View style={styles.donorDetailItem}>
-                <Ionicons name="cash-outline" size={16} color={currentColors.iconSecondary} />
-                <Text style={[styles.donorDetailText, { color: currentColors.textSecondary }]}>
-                  Avg: {formatCurrency(donor.total_donated / donor.donation_count)}
+              <View style={styles.donorStats}>
+                <Text style={[styles.donorAmount, { color: currentColors.success }]}>
+                  {formatCurrency(donor.total_donated)}
                 </Text>
               </View>
             </View>
+            
+            <View style={styles.donorProgress}>
+              <View style={styles.progressBarContainer}>
+                <View style={[styles.progressBar, { 
+                  width: `${(donor.total_donated / Math.max(...summaryData!.top_donors.map(d => d.total_donated)) * 100)}%`,
+                  backgroundColor: chartColors[index % chartColors.length]
+                }]} />
+              </View>
+              <View style={styles.donorDetails}>
+                <View style={styles.donorDetailItem}>
+                  <Ionicons name="receipt-outline" size={16} color={currentColors.iconSecondary} />
+                  <Text style={[styles.donorDetailText, { color: currentColors.textSecondary }]}>
+                    {donor.donation_count} donations
+                  </Text>
+                </View>
+                <View style={styles.donorDetailItem}>
+                  <Ionicons name="cash-outline" size={16} color={currentColors.iconSecondary} />
+                  <Text style={[styles.donorDetailText, { color: currentColors.textSecondary }]}>
+                    Avg: {formatCurrency(donor.total_donated / donor.donation_count)}
+                  </Text>
+                </View>
+              </View>
+            </View>
           </View>
-        </View>
-      ))}
+        ))}
+      </View>
     </ScrollView>
   );
 
   // Render Churches Tab
   const renderChurchesTab = () => (
     <ScrollView style={styles.tabContent} showsVerticalScrollIndicator={false}>
-      <Text style={[styles.sectionTitle, { color: currentColors.textPrimary, marginHorizontal: 20 }]}>
-        ⛪ Top Churches
-      </Text>
-      
-      {summaryData!.top_churches.map((church, index) => (
-        <View key={church.church__id} style={[styles.churchCard, { backgroundColor: currentColors.cardBackground }]}>
-          <View style={styles.churchHeader}>
-            <View style={styles.churchIcon}>
-              <Ionicons name="business" size={28} color={chartColors.rainbow[index % chartColors.rainbow.length]} />
-            </View>
-            <View style={styles.churchInfo}>
-              <Text style={[styles.churchName, { color: currentColors.textPrimary }]}>
-                {church.church__church_name}
-              </Text>
-              <View style={styles.churchStats}>
-                <View style={styles.churchStatItem}>
-                  <Ionicons name="people" size={14} color={currentColors.iconSecondary} />
-                  <Text style={[styles.churchStatText, { color: currentColors.textSecondary }]}>
-                    {church.donation_count} donations
-                  </Text>
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: currentColors.textPrimary }]}>
+          ⛪ Top Churches
+        </Text>
+        
+        {summaryData!.top_churches.slice(0, 10).map((church, index) => (
+          <View key={index} style={[styles.churchCard, { backgroundColor: currentColors.cardBackground }]}>
+            <View style={styles.churchHeader}>
+              <View style={styles.churchIcon}>
+                <Ionicons name="business" size={28} color={chartColors[index % chartColors.length]} />
+              </View>
+              <View style={styles.churchInfo}>
+                <Text style={[styles.churchName, { color: currentColors.textPrimary }]}>
+                  {church.church || 'Unknown Church'}
+                </Text>
+                <View style={styles.churchStats}>
+                  <View style={styles.churchStatItem}>
+                    <Ionicons name="people" size={14} color={currentColors.iconSecondary} />
+                    <Text style={[styles.churchStatText, { color: currentColors.textSecondary }]}>
+                      {church.donation_count} donations
+                    </Text>
+                  </View>
                 </View>
               </View>
+              <View style={styles.churchAmount}>
+                <Text style={[styles.churchAmountText, { color: currentColors.success }]}>
+                  {formatCurrency(church.total_received)}
+                </Text>
+              </View>
             </View>
-            <View style={styles.churchAmount}>
-              <Text style={[styles.churchAmountText, { color: currentColors.success }]}>
-                {formatCurrency(church.total_received)}
-              </Text>
+            
+            <View style={styles.churchChart}>
+              <View style={styles.chartLabel}>
+                <Text style={[styles.chartLabelText, { color: currentColors.textSecondary }]}>
+                  Performance
+                </Text>
+                <Text style={[styles.chartValueText, { color: currentColors.textPrimary }]}>
+                  {(church.total_received / Math.max(...summaryData!.top_churches.map(c => c.total_received)) * 100).toFixed(0)}%
+                </Text>
+              </View>
+              <View style={styles.churchProgressBarContainer}>
+                <View style={[styles.churchProgressBar, { 
+                  width: `${(church.total_received / Math.max(...summaryData!.top_churches.map(c => c.total_received)) * 100)}%`,
+                  backgroundColor: chartColors[index % chartColors.length]
+                }]} />
+              </View>
             </View>
           </View>
-          
-          {/* Horizontal Bar Chart for Church Performance */}
-          <View style={styles.churchChart}>
-            <View style={styles.chartLabel}>
-              <Text style={[styles.chartLabelText, { color: currentColors.textSecondary }]}>
-                Performance
-              </Text>
-              <Text style={[styles.chartValueText, { color: currentColors.textPrimary }]}>
-                {(church.total_received / Math.max(...summaryData!.top_churches.map(c => c.total_received)) * 100).toFixed(0)}%
-              </Text>
-            </View>
-            <View style={styles.churchProgressBarContainer}>
-              <View style={[styles.churchProgressBar, { 
-                width: `${(church.total_received / Math.max(...summaryData!.top_churches.map(c => c.total_received)) * 100)}%`,
-                backgroundColor: chartColors.rainbow[index % chartColors.rainbow.length]
-              }]} />
-            </View>
-          </View>
-        </View>
-      ))}
+        ))}
+      </View>
     </ScrollView>
   );
 
@@ -689,7 +1066,7 @@ const VisualizationScreen: React.FC = () => {
     <SafeAreaView style={[styles.container, { backgroundColor: currentColors.background }]}>
       <StatusBar 
         barStyle={theme === 'dark' ? 'light-content' : 'dark-content'} 
-        backgroundColor={currentColors.headerBackground} 
+        backgroundColor={currentColors.gradientStart} 
       />
       
       {/* Header */}
@@ -776,16 +1153,62 @@ const VisualizationScreen: React.FC = () => {
         {activeTab === 'overview' && renderOverviewTab()}
         {activeTab === 'donors' && renderDonorsTab()}
         {activeTab === 'churches' && renderChurchesTab()}
+        
+        {/* Stats Footer */}
+        <View style={[styles.statsFooter, { backgroundColor: currentColors.cardBackground }]}>
+          <Text style={[styles.statsFooterTitle, { color: currentColors.textPrimary }]}>
+            📈 Real-time Stats
+          </Text>
+          <View style={styles.statsGrid}>
+            <View style={styles.statItem}>
+              <Text style={[styles.statLabel, { color: currentColors.textSecondary }]}>Total All</Text>
+              <Text style={[styles.statValue, { color: currentColors.textPrimary }]}>
+                {formatCurrency(summaryData?.summary.total_all || 0)}
+              </Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={[styles.statLabel, { color: currentColors.textSecondary }]}>Church Total</Text>
+              <Text style={[styles.statValue, { color: currentColors.textPrimary }]}>
+                {formatCurrency(summaryData?.summary.total_church || 0)}
+              </Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={[styles.statLabel, { color: currentColors.textSecondary }]}>Donation Types</Text>
+              <Text style={[styles.statValue, { color: currentColors.textPrimary }]}>
+                {summaryData?.type_distribution.length || 0}
+              </Text>
+            </View>
+          </View>
+        </View>
       </ScrollView>
 
-      {/* Refresh Button */}
-      <TouchableOpacity
-        style={[styles.refreshButton, { backgroundColor: currentColors.buttonPrimary }]}
-        onPress={onRefresh}
+      {/* Floating Action Button */}
+      <Animated.View
+        style={[
+          styles.fabContainer,
+          {
+            transform: [{
+              translateY: fadeAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [100, 0],
+              }),
+            }],
+          }
+        ]}
       >
-        <Ionicons name="refresh" size={24} color="#ffffff" />
-        <Text style={styles.refreshButtonText}>Refresh Data</Text>
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.fabButton, { backgroundColor: currentColors.buttonPrimary }]}
+          onPress={onRefresh}
+        >
+          <Ionicons name="refresh" size={24} color="#ffffff" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.fabButton, { backgroundColor: currentColors.success, marginLeft: 10 }]}
+          onPress={handleShare}
+        >
+          <Ionicons name="share" size={24} color="#ffffff" />
+        </TouchableOpacity>
+      </Animated.View>
     </SafeAreaView>
   );
 };
@@ -800,16 +1223,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   primaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#3b82f6',
-    paddingHorizontal: 32,
-    paddingVertical: 12,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
     borderRadius: 25,
+    elevation: 4,
   },
   header: {
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
     paddingBottom: 20,
     borderBottomLeftRadius: 30,
     borderBottomRightRadius: 30,
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
   },
   headerContent: {
     paddingHorizontal: 20,
@@ -827,6 +1258,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     alignItems: 'center',
     justifyContent: 'center',
+    elevation: 2,
   },
   headerTitleContainer: {
     flex: 1,
@@ -854,6 +1286,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 10,
+    elevation: 2,
   },
   offlineBadge: {
     flexDirection: 'row',
@@ -863,6 +1296,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 12,
+    marginTop: 8,
   },
   offlineText: {
     color: '#ffffff',
@@ -914,6 +1348,19 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 16,
   },
+  timeRangeSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  timeRangeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginRight: 4,
+  },
   summaryGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -940,14 +1387,42 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   summaryValue: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
     textAlign: 'center',
+    marginBottom: 4,
   },
   summaryLabel: {
     fontSize: 12,
     textAlign: 'center',
-    marginTop: 4,
+  },
+  chartTypeContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  chartTypeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    marginHorizontal: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  activeChartTypeButton: {
+    backgroundColor: '#3b82f6',
+  },
+  chartTypeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginLeft: 4,
   },
   chartContainer: {
     borderRadius: 16,
@@ -958,9 +1433,10 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
-  smallChart: {
-    width: '48%',
+  customChartContainer: {
     alignItems: 'center',
+    justifyContent: 'center',
+    padding: 10,
   },
   chart: {
     marginVertical: 8,
@@ -968,30 +1444,31 @@ const styles = StyleSheet.create({
   },
   chartTitle: {
     fontSize: 14,
-    fontWeight: '600',
-    marginTop: 8,
+    fontWeight: 'bold',
     textAlign: 'center',
   },
-  chartTypeSelector: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(0, 0, 0, 0.1)',
-    borderRadius: 8,
-    padding: 4,
+  chartSubtitle: {
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 4,
   },
-  chartTypeButton: {
-    padding: 8,
-    borderRadius: 6,
-    marginHorizontal: 2,
-  },
-  activeChartTypeButton: {
-    backgroundColor: '#3b82f6',
+  chartStats: {
+    alignItems: 'center',
+    marginTop: 8,
   },
   chartLegend: {
     marginTop: 16,
   },
+  legendGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginRight: 16,
+    marginBottom: 8,
   },
   legendColor: {
     width: 12,
@@ -1006,25 +1483,43 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  progressLabels: {
+  smallChart: {
+    width: '48%',
+    alignItems: 'center',
+  },
+  progressDetails: {
     marginTop: 16,
   },
-  progressLabelItem: {
+  progressDetailItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
   },
   progressColor: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: 8,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    marginRight: 12,
   },
-  progressLabelText: {
+  progressInfo: {
+    flex: 1,
+  },
+  progressLabel: {
     fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  progressValues: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  progressAmount: {
+    fontSize: 12,
+  },
+  progressPercentage: {
+    fontSize: 12,
   },
   donorCard: {
-    marginHorizontal: 20,
     marginBottom: 16,
     borderRadius: 16,
     padding: 20,
@@ -1043,7 +1538,6 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#3b82f6',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -1098,7 +1592,6 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   churchCard: {
-    marginHorizontal: 20,
     marginBottom: 16,
     borderRadius: 16,
     padding: 20,
@@ -1174,27 +1667,57 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 4,
   },
-  refreshButton: {
+  fabContainer: {
     position: 'absolute',
     bottom: 30,
-    left: 20,
     right: 20,
     flexDirection: 'row',
+  },
+  fabButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    borderRadius: 25,
+    elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
-    elevation: 8,
   },
-  refreshButtonText: {
-    color: '#ffffff',
+  statsFooter: {
+    margin: 20,
+    borderRadius: 16,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  statsFooterTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  statItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  statLabel: {
+    fontSize: 12,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  statValue: {
     fontSize: 16,
     fontWeight: 'bold',
-    marginLeft: 8,
+    textAlign: 'center',
   },
 });
 

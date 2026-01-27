@@ -1,7 +1,7 @@
 // services/authApi.ts
 import axios from 'axios';
 
-const API_BASE_URL = 'http://192.168.137.1:8000/api/auth';
+const API_BASE_URL = 'https://mhazini.pythonanywhere.com/api/auth';
 
 const axiosInstance = axios.create({
   baseURL: API_BASE_URL,

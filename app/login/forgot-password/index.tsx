@@ -60,7 +60,7 @@ export default function ForgotPasswordScreen() {
             onPress: () => {
               const displayEmail = passwordResetAPI.formatEmailForDisplay(email);
               router.push({
-                pathname: '/login/password-reset-otp-verify',
+                pathname: '/login/verify',
                 params: { 
                   email: email.toLowerCase().trim(),
                   display_email: displayEmail
