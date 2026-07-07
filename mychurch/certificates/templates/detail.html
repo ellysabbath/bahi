@@ -1,0 +1,114 @@
+<!-- certificates/templates/detail.html -->
+{% extends 'base.html' %}
+{% block title %}Certificate Details{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <h2><i class="fas fa-certificate text-warning"></i> Certificate Details</h2>
+        <p class="text-muted">Certificate #{{ certificate.certificate_number }}</p>
+    </div>
+    <div class="col text-end">
+        <!-- ✅ FIXED: Added namespace to all URL references -->
+        <a href="{% url 'certificates:certificate_edit' certificate.pk %}" class="btn btn-warning">
+            <i class="fas fa-edit"></i> Edit
+        </a>
+        <a href="{% url 'certificates:certificate_delete' certificate.pk %}" class="btn btn-danger">
+            <i class="fas fa-trash"></i> Delete
+        </a>
+        <a href="{% url 'certificates:certificate_preview' certificate.pk %}" target="_blank" class="btn btn-success">
+            <i class="fas fa-eye"></i> Preview
+        </a>
+        <a href="{% url 'certificates:certificate_download' certificate.pk %}" class="btn btn-dark">
+            <i class="fas fa-download"></i> Download
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <i class="fas fa-info-circle"></i> Certificate Information
+            </div>
+            <div class="card-body">
+                <table class="table">
+                    <tr>
+                        <th>Certificate Number:</th>
+                        <td><span class="badge bg-warning">{{ certificate.certificate_number }}</span></td>
+                    </tr>
+                    <tr>
+                        <th>Heading:</th>
+                        <td>{{ certificate.heading|default:"N/A" }}</td>
+                    </tr>
+                    <tr>
+                        <th>Person Name:</th>
+                        <td><strong>{{ certificate.person_name|default:"N/A" }}</strong></td>
+                    </tr>
+                    <tr>
+                        <th>Position:</th>
+                        <td>{{ certificate.get_display_position|default:"N/A" }}</td>
+                    </tr>
+                    <tr>
+                        <th>Working Time:</th>
+                        <td>{{ certificate.working_time|default:"N/A" }}</td>
+                    </tr>
+                    <tr>
+                        <th>Issue Date:</th>
+                        <td>{{ certificate.issue_date|date:"F d, Y" }}</td>
+                    </tr>
+                    <tr>
+                        <th>Additional Notes:</th>
+                        <td>{{ certificate.additional_notes|default:"None" }}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <i class="fas fa-images"></i> Images
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-6 text-center">
+                        <h6>Logo</h6>
+                        {% if certificate.logo_image %}
+                            <img src="{{ certificate.logo_image }}" alt="Logo" style="max-width:150px;max-height:150px;border:2px solid #ffd700;border-radius:10px;padding:5px;">
+                        {% else %}
+                            <p class="text-muted">No logo uploaded</p>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-6 text-center">
+                        <h6>Person Photo</h6>
+                        {% if certificate.person_image %}
+                            <img src="{{ certificate.person_image }}" alt="Person" style="max-width:150px;max-height:150px;border:2px solid #ffd700;border-radius:10px;padding:5px;">
+                        {% else %}
+                            <p class="text-muted">No photo uploaded</p>
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-md-6 text-center">
+                        <h6>Person's Signature</h6>
+                        {% if certificate.signature_person %}
+                            <img src="{{ certificate.signature_person }}" alt="Signature" style="max-height:80px;border:1px solid #ddd;border-radius:5px;padding:5px;">
+                        {% else %}
+                            <p class="text-muted">No signature</p>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-6 text-center">
+                        <h6>Leader's Signature</h6>
+                        {% if certificate.leader_signature %}
+                            <img src="{{ certificate.leader_signature }}" alt="Signature" style="max-height:80px;border:1px solid #ddd;border-radius:5px;padding:5px;">
+                        {% else %}
+                            <p class="text-muted">No signature</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

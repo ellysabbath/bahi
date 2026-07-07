@@ -1,0 +1,361 @@
+<!-- certificates/templates/create.html -->
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Create Certificate{% endblock %}
+
+{% block extra_css %}
+<style>
+    .drop-zone {
+        border: 2px dashed #ddd;
+        border-radius: 10px;
+        padding: 30px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        background: #fafafa;
+        min-height: 150px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    }
+    .drop-zone:hover {
+        border-color: #ffd700;
+        background: #fdf8e7;
+    }
+    .drop-zone.dragover {
+        border-color: #ffd700;
+        background: #fdf8e7;
+        transform: scale(1.02);
+    }
+    .drop-zone i {
+        font-size: 48px;
+        color: #ccc;
+        margin-bottom: 10px;
+    }
+    .drop-zone .file-info {
+        margin-top: 10px;
+        font-size: 14px;
+        color: #666;
+    }
+    .drop-zone .file-info strong {
+        color: #333;
+    }
+    .drop-zone .remove-file {
+        position: absolute;
+        top: -10px;
+        right: -10px;
+        background: #dc3545;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 25px;
+        height: 25px;
+        font-size: 14px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.3s;
+    }
+    .drop-zone .remove-file:hover {
+        transform: scale(1.2);
+    }
+    .file-preview {
+        position: relative;
+        display: inline-block;
+        margin: 5px;
+    }
+    .file-preview img {
+        max-width: 150px;
+        max-height: 150px;
+        border-radius: 8px;
+        border: 2px solid #ffd700;
+        padding: 5px;
+        background: white;
+    }
+    .file-preview .file-name {
+        font-size: 12px;
+        color: #666;
+        margin-top: 5px;
+        text-align: center;
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .drop-zone .file-input {
+        display: none;
+    }
+    .image-preview-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 10px;
+        justify-content: center;
+    }
+    .form-section {
+        background: #f8f9fa;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+        border-left: 4px solid #ffd700;
+    }
+    .form-section h5 {
+        color: #1a1a2e;
+        margin-bottom: 15px;
+    }
+    .form-section h5 i {
+        color: #ffd700;
+        margin-right: 10px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col">
+        <h2><i class="fas fa-plus-circle text-warning"></i> Create New Certificate</h2>
+        <p class="text-muted">Fill in the details below to generate a leadership completion certificate</p>
+    </div>
+</div>
+
+<form method="post" enctype="multipart/form-data" id="certificateForm">
+    {% csrf_token %}
+    
+    <!-- Header Section -->
+    <div class="form-section">
+        <h5><i class="fas fa-header"></i> Header Section</h5>
+        <div class="mb-3">
+            <label class="form-label">Heading</label>
+            {{ form.heading }}
+        </div>
+        <div class="row">
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label class="form-label">Logo Image</label>
+                    {{ form.logo_file }}
+                    <div class="drop-zone" id="logo-drop-zone">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                        <p>Drag & drop your logo here or click to browse</p>
+                        <small class="text-muted">Recommended: PNG or JPG, max 2MB</small>
+                        <div id="logo-preview" class="image-preview-container"></div>
+                    </div>
+                    {{ form.logo_image }}
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label class="form-label">Person Photo</label>
+                    {{ form.person_image_file }}
+                    <div class="drop-zone" id="person-drop-zone">
+                        <i class="fas fa-user-circle"></i>
+                        <p>Drag & drop the person's photo here or click to browse</p>
+                        <small class="text-muted">Recommended: PNG or JPG, max 2MB</small>
+                        <div id="person-preview" class="image-preview-container"></div>
+                    </div>
+                    {{ form.person_image }}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Certificate Body -->
+    <div class="form-section">
+        <h5><i class="fas fa-user"></i> Certificate Body</h5>
+        <div class="row">
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label class="form-label required">Person Name</label>
+                    {{ form.person_name }}
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label class="form-label required">Position</label>
+                    {{ form.position }}
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-md-6">
+                <div class="mb-3" id="other_position_field">
+                    <label class="form-label">Other Position</label>
+                    {{ form.other_position }}
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label class="form-label required">Working Time</label>
+                    {{ form.working_time }}
+                    <small class="text-muted d-block">e.g., "5 years", "3 months"</small>
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-12">
+                <div class="mb-3">
+                    <label class="form-label">Additional Notes</label>
+                    {{ form.additional_notes }}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Signatures Section -->
+    <div class="form-section">
+        <h5><i class="fas fa-signature"></i> Signatures</h5>
+        <div class="row">
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label class="form-label">Person's Signature</label>
+                    {{ form.signature_person_file }}
+                    <div class="drop-zone" id="signature-person-drop-zone">
+                        <i class="fas fa-pen"></i>
+                        <p>Drag & drop the person's signature here or click to browse</p>
+                        <small class="text-muted">PNG or JPG with transparent background preferred</small>
+                        <div id="signature-person-preview" class="image-preview-container"></div>
+                    </div>
+                    {{ form.signature_person }}
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label class="form-label">Leader's Signature</label>
+                    {{ form.leader_signature_file }}
+                    <div class="drop-zone" id="signature-leader-drop-zone">
+                        <i class="fas fa-pen-fancy"></i>
+                        <p>Drag & drop the leader's signature here or click to browse</p>
+                        <small class="text-muted">PNG or JPG with transparent background preferred</small>
+                        <div id="signature-leader-preview" class="image-preview-container"></div>
+                    </div>
+                    {{ form.leader_signature }}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Form Actions -->
+    <div class="text-center">
+        <button type="submit" class="btn btn-gold btn-lg">
+            <i class="fas fa-save"></i> Generate Certificate
+        </button>
+        <a href="{% url 'certificates:certificate_list' %}" class="btn btn-secondary btn-lg">
+            <i class="fas fa-times"></i> Cancel
+        </a>
+    </div>
+</form>
+
+{% block extra_js %}
+<script>
+$(document).ready(function() {
+    // Show/hide other_position field based on position selection
+    $('#id_position').change(function() {
+        if ($(this).val() === 'OTHER') {
+            $('#other_position_field').show();
+        } else {
+            $('#other_position_field').hide();
+        }
+    }).trigger('change');
+    
+    // Setup drag and drop for all drop zones
+    setupDropZone('logo', 'logo-drop-zone', 'logo_file', 'logo-preview', 'id_logo_image');
+    setupDropZone('person', 'person-drop-zone', 'person_image_file', 'person-preview', 'id_person_image');
+    setupDropZone('signature-person', 'signature-person-drop-zone', 'signature_person_file', 'signature-person-preview', 'id_signature_person');
+    setupDropZone('signature-leader', 'signature-leader-drop-zone', 'leader_signature_file', 'signature-leader-preview', 'id_leader_signature');
+});
+
+function setupDropZone(id, dropZoneId, fileInputId, previewId, hiddenFieldId) {
+    const dropZone = document.getElementById(dropZoneId);
+    const fileInput = document.getElementById(fileInputId);
+    const preview = document.getElementById(previewId);
+    const hiddenField = document.getElementById(hiddenFieldId);
+    
+    if (!dropZone || !fileInput) return;
+    
+    // Click to open file dialog
+    dropZone.addEventListener('click', function(e) {
+        if (e.target.closest('.remove-file')) return;
+        fileInput.click();
+    });
+    
+    // File input change
+    fileInput.addEventListener('change', function() {
+        if (this.files && this.files[0]) {
+            handleFile(this.files[0], preview, hiddenField);
+        }
+    });
+    
+    // Drag and drop events
+    dropZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        this.classList.add('dragover');
+    });
+    
+    dropZone.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        this.classList.remove('dragover');
+    });
+    
+    dropZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        this.classList.remove('dragover');
+        
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            fileInput.files = e.dataTransfer.files;
+            handleFile(e.dataTransfer.files[0], preview, hiddenField);
+        }
+    });
+}
+
+function handleFile(file, preview, hiddenField) {
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+        alert('Please upload an image file.');
+        return;
+    }
+    
+    // Validate file size (2MB max)
+    if (file.size > 2 * 1024 * 1024) {
+        alert('File size must be less than 2MB.');
+        return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const base64String = e.target.result;
+        
+        // Set hidden field value
+        hiddenField.value = base64String;
+        
+        // Show preview
+        preview.innerHTML = `
+            <div class="file-preview">
+                <img src="${base64String}" alt="Preview">
+                <button type="button" class="remove-file" onclick="removeImage('${preview.id}', '${hiddenField.id}')">×</button>
+                <div class="file-name">${file.name}</div>
+            </div>
+        `;
+    };
+    reader.readAsDataURL(file);
+}
+
+function removeImage(previewId, hiddenFieldId) {
+    const preview = document.getElementById(previewId);
+    const hiddenField = document.getElementById(hiddenFieldId);
+    
+    // Clear preview
+    preview.innerHTML = '';
+    
+    // Clear hidden field
+    hiddenField.value = '';
+    
+    // Clear file input
+    const fileInput = preview.closest('.drop-zone').querySelector('input[type="file"]');
+    if (fileInput) {
+        fileInput.value = '';
+    }
+}
+</script>
+{% endblock %}
+{% endblock %}

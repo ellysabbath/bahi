@@ -1,0 +1,10 @@
+<!-- templates/home.html -->
+{% extends 'base.html' %}
+{% block content %}
+<div class="text-center mt-5">
+    <h1 class="display-4">📜 Certificate Generator</h1>
+    <p class="lead">Create professional certificates in seconds</p>
+    <a href="{% url 'create_certificate' %}" class="btn btn-primary btn-lg">Create New Certificate</a>
+    <a href="{% url 'certificate_list' %}" class="btn btn-secondary btn-lg">View All</a>
+</div>
+{% endblock %}
